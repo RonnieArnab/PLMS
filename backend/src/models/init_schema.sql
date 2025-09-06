@@ -1,8 +1,11 @@
 -- ==========================================
--- Loan Management System Schema (PostgreSQL)
+-- Loan Management System Schema (PostgreSQL) - UUID keys + refresh_token
 -- ==========================================
 
--- Drop tables if already exist (for dev purposes)
+-- Enable UUID generation (pgcrypto provides gen_random_uuid())
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- Drop tables if already exist (for dev purposes) - order not important because of CASCADE
 DROP TABLE IF EXISTS payments CASCADE;
 DROP TABLE IF EXISTS notifications CASCADE;
 DROP TABLE IF EXISTS repaymentschedule CASCADE;
@@ -15,35 +18,36 @@ DROP TABLE IF EXISTS users CASCADE;
 
 -- ================== USERS ==================
 CREATE TABLE users (
-    user_id SERIAL PRIMARY KEY,
+    user_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email VARCHAR(150) UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     role VARCHAR(50) NOT NULL DEFAULT 'USER',
     phone_number VARCHAR(20),
     aadhaar_no VARCHAR(20) UNIQUE,
     pan_no VARCHAR(20) UNIQUE,
+    refresh_token TEXT, -- newly added refresh token (can be NULL)
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
 
 -- ================== CUSTOMER PROFILE ==================
 CREATE TABLE customerprofile (
-    customer_id SERIAL PRIMARY KEY,
-    user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    customer_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     full_name VARCHAR(150) NOT NULL,
     profession VARCHAR(100),
     years_experience INT,
     annual_income NUMERIC(12,2),
     kyc_status VARCHAR(20) DEFAULT 'PENDING',
     address TEXT,
-    account_id INT,
+    account_id UUID, -- references bank_accounts(account_id) (nullable to avoid circular creation issues)
     created_at TIMESTAMP DEFAULT NOW()
 );
 
 -- ================== BANK ACCOUNTS ==================
 CREATE TABLE bank_accounts (
-    account_id SERIAL PRIMARY KEY,
-    customer_id INT NOT NULL REFERENCES customerprofile(customer_id) ON DELETE CASCADE,
+    account_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    customer_id UUID NOT NULL REFERENCES customerprofile(customer_id) ON DELETE CASCADE,
     bank_name VARCHAR(150) NOT NULL,
     branch_name VARCHAR(150),
     ifsc_code VARCHAR(20),
@@ -55,7 +59,7 @@ CREATE TABLE bank_accounts (
 
 -- ================== LOAN PRODUCTS ==================
 CREATE TABLE loanproducts (
-    product_id SERIAL PRIMARY KEY,
+    product_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(150) NOT NULL,
     target_profession VARCHAR(100),
     min_amount NUMERIC(12,2) NOT NULL,
@@ -69,9 +73,9 @@ CREATE TABLE loanproducts (
 
 -- ================== LOAN APPLICATIONS ==================
 CREATE TABLE loanapplications (
-    loan_id SERIAL PRIMARY KEY,
-    user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    product_id INT NOT NULL REFERENCES loanproducts(product_id),
+    loan_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    product_id UUID NOT NULL REFERENCES loanproducts(product_id),
     loan_amount NUMERIC(12,2) NOT NULL,
     tenure_months INT NOT NULL,
     application_status VARCHAR(20) DEFAULT 'DRAFT',
@@ -86,9 +90,9 @@ CREATE TABLE loanapplications (
 
 -- ================== DOCUMENTS ==================
 CREATE TABLE documents (
-    document_id SERIAL PRIMARY KEY,
-    loan_id INT NOT NULL REFERENCES loanapplications(loan_id) ON DELETE CASCADE,
-    uploaded_by_user INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    document_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    loan_id UUID NOT NULL REFERENCES loanapplications(loan_id) ON DELETE CASCADE,
+    uploaded_by_user UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     document_type VARCHAR(50) NOT NULL,
     file_url TEXT NOT NULL,
     verification_status VARCHAR(20) DEFAULT 'PENDING',
@@ -97,8 +101,8 @@ CREATE TABLE documents (
 
 -- ================== REPAYMENT SCHEDULE ==================
 CREATE TABLE repaymentschedule (
-    repayment_id SERIAL PRIMARY KEY,
-    loan_id INT NOT NULL REFERENCES loanapplications(loan_id) ON DELETE CASCADE,
+    repayment_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    loan_id UUID NOT NULL REFERENCES loanapplications(loan_id) ON DELETE CASCADE,
     installment_no INT NOT NULL,
     due_date DATE NOT NULL,
     principal_due NUMERIC(12,2),
@@ -109,10 +113,10 @@ CREATE TABLE repaymentschedule (
 
 -- ================== PAYMENTS ==================
 CREATE TABLE payments (
-    payment_id SERIAL PRIMARY KEY,
-    repayment_id INT REFERENCES repaymentschedule(repayment_id) ON DELETE CASCADE,
-    loan_id INT NOT NULL REFERENCES loanapplications(loan_id) ON DELETE CASCADE,
-    payer_user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    payment_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    repayment_id UUID REFERENCES repaymentschedule(repayment_id) ON DELETE CASCADE,
+    loan_id UUID NOT NULL REFERENCES loanapplications(loan_id) ON DELETE CASCADE,
+    payer_user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
     payment_date DATE DEFAULT CURRENT_DATE,
     amount_paid NUMERIC(12,2) NOT NULL,
     payment_method VARCHAR(50),
@@ -125,9 +129,9 @@ CREATE TABLE payments (
 
 -- ================== NOTIFICATIONS ==================
 CREATE TABLE notifications (
-    notification_id SERIAL PRIMARY KEY,
-    user_id INT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-    loan_id INT REFERENCES loanapplications(loan_id) ON DELETE CASCADE,
+    notification_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    loan_id UUID REFERENCES loanapplications(loan_id) ON DELETE CASCADE,
     channel VARCHAR(50),
     message TEXT NOT NULL,
     sent_at TIMESTAMP DEFAULT NOW()
@@ -143,3 +147,8 @@ CREATE INDEX idx_docs_loan ON documents(loan_id);
 CREATE INDEX idx_repayments_loan ON repaymentschedule(loan_id);
 CREATE INDEX idx_payments_loan ON payments(loan_id);
 CREATE INDEX idx_notifications_user ON notifications(user_id);
+
+-- Optional: foreign key backfill note
+-- If you want customerprofile.account_id to reference bank_accounts(account_id), you can add:
+-- ALTER TABLE customerprofile
+--   ADD CONSTRAINT fk_customer_account FOREIGN KEY (account_id) REFERENCES bank_accounts(account_id) ON DELETE SET NULL;

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900">
+  <!-- Gradient background -->
+  <defs>
+    <linearGradient id="bgGradient" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#16a34a"/>
+      <stop offset="100%" stop-color="#065f46"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Base gradient -->
+  <rect width="1440" height="900" fill="url(#bgGradient)" />
+
+  <!-- Soft blobs -->
+  <circle cx="200" cy="200" r="180" fill="#22c55e" opacity="0.25"/>
+  <circle cx="1250" cy="150" r="220" fill="#15803d" opacity="0.2"/>
+  <circle cx="400" cy="700" r="300" fill="#16a34a" opacity="0.15"/>
+
+  <!-- Wave at bottom -->
+  <path fill="#064e3b" fill-opacity="0.5" 
+    d="M0,480L60,470C120,460,240,440,360,426.7C480,413,600,407,720,416C840,425,960,449,1080,464C1200,479,1320,485,1380,488L1440,492L1440,900L0,900Z"/>
+</svg>

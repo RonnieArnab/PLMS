@@ -1,17 +1,16 @@
 import React from "react";
+import { motion } from "framer-motion";
 
-export const Card = ({ children, className = "", padding = "md" }) => {
-  const paddingClasses = {
-    none: "",
-    sm: "p-4",
-    md: "p-6",
-    lg: "p-8",
-  };
-
+export function Card({ children, className = "", padding = "md" }) {
+  const pads = { none: "", sm: "p-4", md: "p-6", lg: "p-8" };
   return (
-    <div
-      className={`bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 hover:shadow-md transition-shadow duration-200 ${paddingClasses[padding]} ${className}`}>
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      whileHover={{ translateY: -6 }}
+      transition={{ type: "spring", stiffness: 220, damping: 22 }}
+      className={`card bg-base-100 shadow-sm border border-base-200 rounded-xl ${pads[padding]} ${className}`}>
       {children}
-    </div>
+    </motion.div>
   );
-};
+}

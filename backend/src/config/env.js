@@ -1,7 +1,23 @@
-import dotenv from 'dotenv';
+import dotenv from "dotenv";
 dotenv.config();
 
 export const env = {
-  nodeEnv: process.env.NODE_ENV ?? 'development',
-  port: parseInt(process.env.PORT ?? '3000', 10)
+  nodeEnv: process.env.NODE_ENV || "development",
+  port: Number(process.env.PORT) || 3000,
+
+  // PostgreSQL
+  dbUser: process.env.DB_USER || "postgres",
+  dbHost: process.env.DB_HOST || "localhost",
+  dbName: process.env.DB_NAME || "loan_management",
+  dbPass: process.env.DB_PASS || "123456",
+  dbPort: Number(process.env.DB_PORT) || 5432,
+
+  // JWT Secrets
+  jwtSecret: process.env.JWT_SECRET || "super_secret_access_key",
+  jwtRefreshSecret:
+    process.env.JWT_REFRESH_SECRET || "super_secret_refresh_key",
+
+  // Cookie settings
+  cookieSecure: process.env.COOKIE_SECURE === "true", // true in prod
+  cookieSameSite: process.env.COOKIE_SAMESITE || "strict",
 };

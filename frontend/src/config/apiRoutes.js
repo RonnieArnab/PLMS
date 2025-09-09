@@ -1,23 +1,15 @@
-const API_BASE =
-  import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000/api";
-
+// src/config/apiRoutes.js
 export const API_ROUTES = {
-  base: API_BASE,
+  base: "http://localhost:4000",
   auth: {
-    login: "/auth/login",
-    logout: "/auth/logout",
-    refresh: "/auth/refresh",
-    me: "/users/me",
+    login: "/api/auth/login",
+    logout: "/api/auth/logout",
+    refresh: "/api/auth/refresh",
+    signup: "/api/auth/signup",
   },
-  // dashboard: {
-  //   stats: "/dashboard/stats",
-  //   applications: "/dashboard/applications",
-  //   payments: "/dashboard/payments",
-  //   portfolio: "/dashboard/portfolio",
-  // },
-  // loans: {
-  //   list: "/loans",
-  //   create: "/loans",
-  //   payments: "/loans/payments",
-  // },
+  customer: {
+    register: "/api/customer/register",
+    me: "/api/customer/me", // GET & PATCH for profile
+    kyc: "/api/customer/kyc", // POST for uploading kyc documents
+  },
 };

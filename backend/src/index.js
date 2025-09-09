@@ -5,7 +5,7 @@ import dotenv from "dotenv";
 import cookieParser from "cookie-parser";
 
 import userRoutes from "./routes/users.js";
-import customerRoutes from "./routes/customers.js";
+import customerRoutes from "./routes/customer.js";
 import bankRoutes from "./routes/bankAccounts.js";
 import loanProductRoutes from "./routes/loanProducts.js";
 import loanAppRoutes from "./routes/loanApplications.js";
@@ -15,6 +15,7 @@ import paymentRoutes from "./routes/payments.js";
 import notificationRoutes from "./routes/notifications.js";
 import kycRoutes from "./routes/kyc.js";
 import authRoutes from "./routes/auth.js";
+import adminRoutes from "./routes/admin.js";
 
 dotenv.config();
 const app = express();
@@ -30,8 +31,10 @@ app.use(cookieParser());
 
 // Routes
 app.use("/api/auth", authRoutes);
+app.use("/api/customer", customerRoutes);
+app.use("/api/admin", adminRoutes);
 app.use("/api/users", userRoutes);
-app.use("/api/customers", customerRoutes);
+app.use("/api/customer", customerRoutes);
 app.use("/api/bank-accounts", bankRoutes);
 app.use("/api/loan-products", loanProductRoutes);
 app.use("/api/loan-applications", loanAppRoutes);

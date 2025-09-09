@@ -1,26 +1,24 @@
 import jwt from "jsonwebtoken";
 
 export const authenticate = (req, res, next) => {
-  try {
-    // 1. Extract token from "Authorization: Bearer <token>"
-    const authHeader = req.headers["authorization"];
-    const token = authHeader && authHeader.split(" ")[1];
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return res.status(401).json({ error: "No token provided" });
+  const parts = authHeader.split(" ");
+  if (parts.length !== 2) return res.status(401).json({ error: "Token error" });
+  const [scheme, token] = parts;
+  if (!/^Bearer$/i.test(scheme))
+    return res.status(401).json({ error: "Token malformatted" });
 
-    if (!token) {
-      return res.status(401).json({ error: "No token provided" });
-    }
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) return res.status(401).json({ error: "Token invalid" });
+    req.user = { userId: decoded.userId, role: decoded.role };
+    next();
+  });
+};
 
-    // 2. Verify token
-    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-      if (err) {
-        return res.status(403).json({ error: "Invalid or expired token" });
-      }
-
-      // 3. Attach decoded payload to req.user
-      req.user = decoded;
-      next();
-    });
-  } catch (err) {
-    res.status(500).json({ error: "Internal server error" });
-  }
+export const requireAdmin = (req, res, next) => {
+  if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+  if (req.user.role !== "ADMIN")
+    return res.status(403).json({ error: "Admin only" });
+  next();
 };

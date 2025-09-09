@@ -1,4 +1,4 @@
-import api from "../api/auth";
+import api from "@api/api";
 import { API_ROUTES } from "../config/apiRoutes";
 
 // Fallback (your current static data)

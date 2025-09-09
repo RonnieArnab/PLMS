@@ -23,25 +23,6 @@ export default function HeaderHero({ onApply = () => {} }) {
             <Text variant="muted" className="mt-2">
               Quick overview of your loan portfolio and recent activity.
             </Text>
-
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => console.log("save draft")}>
-                Save Draft
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => console.log("open help")}>
-                Help
-              </Button>
-              <div className="ml-2 text-sm text-base-content/60 hidden sm:inline">
-                <span className="inline-block rounded-full w-2 h-2 bg-lime-500 mr-2 align-middle" />
-                Auto-save enabled
-              </div>
-            </div>
           </div>
 
           <div className="flex items-center gap-3 w-full lg:w-auto">

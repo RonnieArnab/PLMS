@@ -130,7 +130,7 @@ export const Navbar = () => {
                 </div>
 
                 <span className="hidden md:block text-sm font-medium text-gray-900 dark:text-white">
-                  {user.name || user.email || "User"}
+                  {user.full_name || user.email || "User"}
                 </span>
               </button>
 

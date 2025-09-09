@@ -1,3 +1,4 @@
+// src/App.jsx
 import React from "react";
 import {
   BrowserRouter as Router,
@@ -7,10 +8,11 @@ import {
   useLocation,
 } from "react-router-dom";
 import { ThemeProvider } from "../context/ThemeContext";
-import { AuthProvider, useAuth } from "../context/AuthContext";
+import { AuthProvider, useAuth } from "@context/AuthContext";
 
 import { AuthPage } from "@features/auth/pages/AuthPage";
 import { Navbar } from "@components/layout/Navbar";
+import ProtectedRoute from "@features/auth/components/ProtectedRoute";
 
 import { UserDashboard } from "@features/dashboard/pages/UserDashboard";
 import { MyLoans } from "@features/loans/pages/MyLoans";
@@ -19,19 +21,12 @@ import PaymentPage from "@features/payments/pages/PaymentsPage";
 import ProfilePage from "@features/profile/pages/ProfilePage";
 import LandingPage from "../pages/LandingPage";
 import { LoanAppProvider } from "@features/loans";
-
-// 🔒 Protect routes
-const ProtectedRoute = ({ children }) => {
-  const { user } = useAuth();
-  if (!user) return <Navigate to="/auth" replace />;
-  return children;
-};
+import KycUpdatePage from "@features/profile/pages/KycUpdatePage";
 
 const AppContent = () => {
   const { user } = useAuth();
   const location = useLocation();
 
-  // hide navbar on landing and auth pages
   const hideNavbarRoutes = ["/", "/auth"];
   const shouldShowNavbar =
     user && !hideNavbarRoutes.includes(location.pathname);
@@ -41,14 +36,12 @@ const AppContent = () => {
       {shouldShowNavbar && <Navbar />}
 
       <Routes>
-        {/* Public Routes */}
         <Route path="/" element={<LandingPage />} />
         <Route
           path="/auth"
           element={user ? <Navigate to="/dashboard" replace /> : <AuthPage />}
         />
 
-        {/* Protected Routes */}
         <Route
           path="/dashboard"
           element={
@@ -91,8 +84,17 @@ const AppContent = () => {
             </ProtectedRoute>
           }
         />
+        <Route
+          path="/profile/kyc"
+          element={
+            <ProtectedRoute>
+              <KycUpdatePage />
+            </ProtectedRoute>
+          }
+        />
+        {/* Example admin-only route */}
+        {/* <Route path="/admin" element={<ProtectedRoute requiredRole="ADMIN"><AdminDashboard/></ProtectedRoute>} /> */}
 
-        {/* Catch-all */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </div>

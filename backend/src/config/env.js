@@ -8,7 +8,7 @@ export const env = {
   // PostgreSQL
   dbUser: process.env.DB_USER || "postgres",
   dbHost: process.env.DB_HOST || "localhost",
-  dbName: process.env.DB_NAME || "loan_management",
+  dbName: process.env.DB_NAME || "PLMS_DB",
   dbPass: process.env.DB_PASS || "123456",
   dbPort: Number(process.env.DB_PORT) || 5432,
 

@@ -1,11 +1,9 @@
-import { Router } from "express";
+import express from "express";
 import { signup, login, refreshToken, logout } from "../controllers/auth.js";
-import { validateSignup, validateLogin } from "../middleware/validator.js";
 
-const router = Router();
-
-router.post("/signup", validateSignup, signup);
-router.post("/login", validateLogin, login);
+const router = express.Router();
+router.post("/signup", signup);
+router.post("/login", login);
 router.post("/refresh", refreshToken);
 router.post("/logout", logout);
 

@@ -8,6 +8,7 @@ import SecurityCard from "@features/profile/components/SecurityCard.jsx";
 import KycCard from "@features/profile/components/KycCard.jsx";
 import QuickActions from "@features/profile/components/QuickActions.jsx";
 import { Text } from "@components/ui/Text.jsx";
+import { useNavigate } from "react-router-dom";
 
 /**
  * Top-level Profile page assembled from smaller components.
@@ -24,6 +25,7 @@ export default function ProfilePage() {
   const [avatarPreview, setAvatarPreview] = useState(null);
   const [result, setResult] = useState(null);
 
+  const navigate = useNavigate();
   // combined form
   const [formData, setFormData] = useState({
     name: "",
@@ -201,7 +203,7 @@ export default function ProfilePage() {
             <KycCard
               loading={loading}
               kyc={{}}
-              onUpdate={() => alert("Update KYC (simulated)")}
+              onUpdate={() => navigate("/profile/kyc")}
             />
             <div>
               <Text variant="muted" className="mb-2">

@@ -1,16 +1,12 @@
-// src/hooks/useCustomer.js
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@context/AuthContext";
 
-/**
- * useCustomer - wrapper around AuthContext fetchCustomer/updateCustomer
- * Returns: { customer, loading, error, refreshCustomer, updateCustomer }
- */
 export default function useCustomer() {
   const auth = useAuth?.() ?? {};
   const { user: authUser, fetchCustomer, updateCustomer } = auth;
 
-  const buildFromAuth = (u) => {
+  // Extract and map customer profile fields from authUser object
+  const buildFromAuth = useCallback((u) => {
     if (!u) return null;
     const {
       customer_id,
@@ -23,6 +19,8 @@ export default function useCustomer() {
       kyc_status,
       address,
       account_id,
+      nominee,
+      nominee_contact,
       ...rest
     } = u;
     if (customer_id || pan_no || aadhaar_no) {
@@ -37,19 +35,24 @@ export default function useCustomer() {
         kyc_status,
         address,
         account_id,
+        nominee,
+        nominee_contact,
         ...rest,
       };
     }
     return null;
-  };
+  }, []);
 
+  // Initial customer state derived from auth context user if available
   const initial = buildFromAuth(authUser);
+
   const [customer, setCustomer] = useState(initial);
   const [loading, setLoading] = useState(
     initial ? false : typeof fetchCustomer === "function"
   );
   const [error, setError] = useState(null);
 
+  // Function to refresh customer data by calling fetchCustomer()
   const refreshCustomer = useCallback(async () => {
     if (typeof fetchCustomer !== "function") {
       const err = "fetchCustomer not available";
@@ -79,7 +82,8 @@ export default function useCustomer() {
     }
   }, [fetchCustomer]);
 
-  const doUpdateCustomer = useCallback(
+  // Function to update customer profile by calling updateCustomer()
+  const updateCustomerData = useCallback(
     async (payload) => {
       if (typeof updateCustomer !== "function") {
         const err = "updateCustomer not available";
@@ -108,8 +112,8 @@ export default function useCustomer() {
     [updateCustomer]
   );
 
+  // Effect to initialize or refresh customer data on auth changes
   useEffect(() => {
-    // if auth.user contains profile data use it, otherwise fetch proactively
     const candidate = buildFromAuth(authUser);
     if (candidate) {
       setCustomer(candidate);
@@ -118,20 +122,17 @@ export default function useCustomer() {
       return;
     }
     if (!customer && typeof fetchCustomer === "function") {
-      refreshCustomer().catch((e) => {
-        // handled inside refreshCustomer - just avoid warning
-        // eslint-disable-next-line no-console
-        console.warn("refreshCustomer failed:", e);
+      refreshCustomer().catch(() => {
+        // suppress unhandled rejections in effect
       });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authUser, fetchCustomer, refreshCustomer]);
+  }, [authUser, fetchCustomer, refreshCustomer, customer, buildFromAuth]);
 
   return {
     customer,
     loading,
     error,
     refreshCustomer,
-    updateCustomer: doUpdateCustomer,
+    updateCustomer: updateCustomerData,
   };
 }

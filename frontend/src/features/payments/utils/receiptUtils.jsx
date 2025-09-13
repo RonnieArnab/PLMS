@@ -1,102 +1,197 @@
 import jsPDF from "jspdf";
 
-export async function generatePdfFromHtmlElement(
-  element,
-  filename = "receipt.pdf"
-) {
-  const doc = new jsPDF({ unit: "px", format: "a4" });
-  try {
-    await doc.html(element, {
-      x: 20,
-      y: 20,
-      html2canvas: { scale: 1.2, useCORS: true, backgroundColor: "#ffffff" },
-      callback: () => doc.save(filename),
-    });
-  } catch (err) {
-    console.error("generatePdfFromHtmlElement error:", err);
-    throw err;
-  }
-}
+// Utility to format date with time
+const formatDateTime = (date) => {
+  return new Date(date).toLocaleString("en-IN", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+};
 
-export function buildReceiptHtml(payment) {
-  return `
-  <div style="display:flex;align-items:center;gap:16px;margin-bottom:12px;">
-    <div style="width:56px;height:56px;border-radius:10px;background:linear-gradient(90deg,#84cc16,#22c55e);display:flex;align-items:center;justify-content:center;color:white;font-weight:700;">PL</div>
-    <div>
-      <div style="font-size:18px;font-weight:700;color:#0f172a;">PLMS Loans</div>
-      <div style="font-size:12px;color:#6b7280;">Payment Receipt</div>
-    </div>
-  </div>
-  <div style="height:1px;background:#e6e6e6;margin:12px 0;"></div>
-  <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:12px;">
-    <div>
-      <div style="font-size:12px;color:#6b7280">PAYER</div>
-      <div style="font-weight:600;color:#0f172a">${
-        payment.payer?.name || "Customer"
-      }</div>
-      <div style="font-size:12px;color:#6b7280">${
-        payment.payer?.email || ""
-      }</div>
-    </div>
-    <div style="text-align:right">
-      <div style="font-size:12px;color:#6b7280">RECEIPT ID</div>
-      <div style="font-weight:600;color:#0f172a">${payment.id}</div>
-      <div style="font-size:12px;color:#6b7280;margin-top:6px">DATE</div>
-      <div style="font-weight:600;color:#0f172a">${payment.date}</div>
-    </div>
-  </div>
-  <table style="width:100%;border-collapse:collapse;margin-top:6px;font-size:14px;color:#0f172a;">
-    <thead>
-      <tr><th style="text-align:left;padding:8px 0;border-bottom:1px solid #eee">Description</th><th style="text-align:right;padding:8px 0;border-bottom:1px solid #eee">Amount</th></tr>
-    </thead>
-    <tbody>
-      <tr><td style="padding:10px 0">${
-        payment.method || "Payment"
-      }</td><td style="text-align:right;padding:10px 0">₹${
-    typeof payment.amount === "number"
-      ? payment.amount.toLocaleString("en-IN")
-      : payment.amount
-  }</td></tr>
-    </tbody>
-    <tfoot>
-      <tr><td style="padding-top:12px;font-weight:700">Total</td><td style="padding-top:12px;text-align:right;font-weight:700">₹${
-        typeof payment.amount === "number"
-          ? payment.amount.toLocaleString("en-IN")
-          : payment.amount
-      }</td></tr>
-    </tfoot>
-  </table>
-  <div style="margin-top:18px;font-size:12px;color:#6b7280">Reference: ${
-    payment.ref || "-"
-  }<br/>Thank you for your payment — if you have questions, contact support@example.com</div>
-  `;
-}
+// Generate comprehensive payment receipt PDF
+export const downloadReceiptPdf = (payment, userDetails = null) => {
+  const doc = new jsPDF();
+  const primary = "#00BFA6";
+  const textDark = "#0D1B2A";
 
-export async function downloadReceiptPdf(payment) {
-  if (!payment) return;
-  const container = document.createElement("div");
-  container.style.all = "initial";
-  container.style.position = "fixed";
-  container.style.left = "-9999px";
-  container.style.top = "0";
-  container.style.padding = "24px";
-  container.style.maxWidth = "760px";
-  container.style.width = "760px";
-  container.style.boxSizing = "border-box";
-  container.style.fontFamily =
-    "Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif";
-  container.style.color = "#111827";
-  container.style.backgroundColor = "#ffffff";
-  container.style.lineHeight = "1.4";
-  container.style.fontSize = "14px";
-  container.innerHTML = buildReceiptHtml(payment);
-  document.body.appendChild(container);
-  try {
-    await generatePdfFromHtmlElement(container, `receipt_${payment.id}.pdf`);
-  } catch (err) {
-    console.error("pdf error:", err);
-    throw err;
-  } finally {
-    container.remove();
-  }
-}
+  // ================== HEADER ==================
+  doc.setFillColor(230, 247, 244); // bg-[#E6F7F4]
+  doc.roundedRect(14, 10, 12, 12, 3, 3, "F"); // company logo circle
+  doc.setFontSize(18);
+  doc.setFont("helvetica", "bold");
+  doc.setTextColor(primary);
+  doc.text("$", 18, 18); // ProLoan logo
+
+  doc.setFontSize(18);
+  doc.setTextColor(textDark);
+  doc.setFont("helvetica", "bold");
+  doc.text("ProLoan", 30, 18);
+
+  doc.setFontSize(22);
+  doc.setTextColor(textDark);
+  doc.setFont("helvetica", "bold");
+  doc.text("PAYMENT RECEIPT", 105, 35, { align: "center" });
+
+  // ================== RECEIPT META ==================
+  doc.setFontSize(10);
+  doc.setTextColor(100);
+  doc.setFont("helvetica", "normal");
+  doc.text(`Receipt No: ${payment.id}`, 130, 15);
+  doc.text(`Generated: ${formatDateTime(new Date())}`, 130, 22);
+
+  // ================== PERSONAL INFORMATION BOX ==================
+  doc.setLineWidth(2);
+  doc.setDrawColor(200);
+  doc.rect(15, 45, 180, 55); // Personal information box
+
+  doc.setFontSize(14);
+  doc.setTextColor(textDark);
+  doc.setFont("helvetica", "bold");
+  doc.text("PERSONAL INFORMATION", 20, 55);
+
+  // Left column - Personal Info
+  doc.setFontSize(11);
+  doc.setFont("courier", "bold");
+  doc.setTextColor(50);
+  doc.text(`Full Name:`, 20, 68);
+  doc.text(`Email:`, 20, 76);
+  doc.text(`Phone:`, 20, 84);
+  doc.text(`Address:`, 20, 92);
+
+  // Right column - Financial Info
+  doc.text(`Date of Birth:`, 110, 68);
+  doc.text(`Bank:`, 110, 76);
+  doc.text(`Account:`, 110, 84);
+
+  // Fill in customer data - prioritizing from payment.profile or userDetails or payment.payer
+  const profile = payment.profile || userDetails || {};
+  const customerName = profile?.full_name || profile?.name || payment.payer?.name || "N/A";
+  const customerMobile = profile?.phone || profile?.mobile || userDetails?.phone_number || "N/A";
+  const customerEmail = profile?.email || payment.payer?.email || "N/A";
+  const customerAddress = profile?.address || "N/A";
+  const dateOfBirth = profile?.date_of_birth || "N/A";
+  const bankName = profile?.bank_name || "N/A";
+  const bankAccount = profile?.account_number ?
+    `XXXX-XXXX-${profile.account_number.slice(-4)}` :
+    `XXXX-XXXX-XXXX`;
+
+  doc.setFont("courier", "normal");
+  doc.text(customerName, 50, 68);
+  doc.text(customerEmail, 50, 76);
+  doc.text(customerMobile, 50, 84);
+  doc.text(customerAddress, 50, 92);
+
+  doc.text(dateOfBirth, 140, 68);
+  doc.text(bankName, 140, 76);
+  doc.text(bankAccount, 140, 84);
+
+  // ================== LOAN INFORMATION BOX ==================
+  doc.setLineWidth(2);
+  doc.setDrawColor(200);
+  doc.rect(15, 105, 180, 25); // Loan information box
+
+  doc.setFontSize(14);
+  doc.setTextColor(textDark);
+  doc.setFont("helvetica", "bold");
+  doc.text("LOAN INFORMATION", 20, 115);
+
+  // Loan Account
+  doc.setFontSize(11);
+  doc.setFont("courier", "bold");
+  doc.setTextColor(50);
+  doc.text(`Loan Account:`, 20, 125);
+
+  const loanAccount = payment.loan_id || profile?.loan_account || payment.id || "N/A";
+  doc.setFont("courier", "normal");
+  doc.text(loanAccount, 55, 125);
+
+  // ================== PAYMENT DETAILS BOX ==================
+  doc.setLineWidth(2);
+  doc.setDrawColor(200);
+  doc.rect(15, 135, 180, 60); // Payment details box
+
+  doc.setFontSize(14);
+  doc.setTextColor(textDark);
+  doc.setFont("helvetica", "bold");
+  doc.text("PAYMENT DETAILS", 20, 145);
+
+  // Left column
+  doc.setFontSize(11);
+  doc.setFont("courier", "bold");
+  doc.setTextColor(50);
+  doc.text(`Installment No:`, 20, 160);
+  doc.text(`Amount Paid:`, 20, 170);
+  doc.text(`Payment Date:`, 20, 180);
+
+  // Right column
+  doc.text(`Transaction ID:`, 110, 160);
+  doc.text(`Status:`, 110, 170);
+
+  // Fill in payment data
+  const installment = payment.installment || payment.installment_number || "1";
+  const amount = `₹${payment.amount || payment.amount_paid}`;
+  const paymentDate = formatDateTime(payment.date || payment.payment_date);
+  const paymentMode = payment.method || payment.payment_method || "UPI";
+  const transactionId = payment.transaction_reference || payment.reference || "N/A";
+  doc.setFont("courier", "normal");
+  doc.text(installment.toString(), 60, 160);
+  doc.text(amount, 60, 170);
+  doc.text(paymentDate, 60, 180);
+
+  doc.text(transactionId, 140, 160);
+  doc.setTextColor(primary);
+  doc.setFont("helvetica", "normal");
+  doc.text("Successful ✅", 140, 170);
+
+  // ================== AMOUNT BREAKDOWN ==================
+  doc.setLineWidth(2);
+  doc.setDrawColor(200);
+  doc.rect(15, 195, 180, 35); // Amount breakdown box
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(12);
+  doc.setTextColor(textDark);
+  doc.text("Amount Breakdown", 20, 205);
+
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(11);
+  doc.setTextColor(50);
+
+  // Left column
+  doc.text(`Payment Mode: ${paymentMode || "N/A"}`, 20, 215);
+  doc.text(`Principal Amount: ₹${payment.principal || "0.00"}`, 20, 225);
+
+  // Right column
+  doc.text(`Interest Amount: ₹${payment.interest || "0.00"}`, 120, 215);
+  doc.text(`Total Amount: ₹${payment.amount || "0.00"}`, 120, 225);
+
+  // add horizontal lines to make table
+  doc.setLineWidth(0.5);
+  doc.line(15, 220, 195, 220);
+
+  doc.setLineWidth(1);
+  doc.line(100, 195, 100, 230); // vertical middle
+
+  // ================== FOOTER ==================
+  doc.setDrawColor(primary);
+  doc.line(20, 275, 190, 275);
+
+  doc.setFontSize(9);
+  doc.setTextColor(100);
+  doc.setFont("helvetica", "normal");
+  doc.text("This is a system-generated receipt. No signature required.", 105, 283, { align: "center" });
+  doc.text("For any queries, contact customer support at support@proloan.com", 105, 290, { align: "center" });
+
+  // Add page number
+  doc.setFontSize(8);
+  doc.setTextColor(150);
+  doc.text("Page 1 of 1", 95, 295);
+
+  // Save the PDF with timestamp
+  const timestamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, '');
+  doc.save(`Payment_Receipt_${payment.id}_${timestamp}.pdf`);
+};

@@ -1,24 +1,27 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { DashboardLayout } from "@components/layout/DashboardLayout";
 import { useAuth } from "@context/AuthContext";
+import useCustomer from "@features/profile/hooks/useCustomer";
 
 import ProfileHeader from "@features/profile/components/ProfileHeader";
-import ProfileDetails from "@features/profile/components/ProfileDetails.jsx";
-import SecurityCard from "@features/profile/components/SecurityCard.jsx";
-import KycCard from "@features/profile/components/KycCard.jsx";
-import QuickActions from "@features/profile/components/QuickActions.jsx";
-import { Text } from "@components/ui/Text.jsx";
+import ProfileDetails from "@features/profile/components/ProfileDetails";
+import SecurityCard from "@features/profile/components/SecurityCard";
+import KycCard from "@features/profile/components/KycCard";
+import QuickActions from "@features/profile/components/QuickActions";
+import { Text } from "@components/ui/Text";
 import { useNavigate } from "react-router-dom";
 
 /**
  * Top-level Profile page assembled from smaller components.
- * - loading skeletons preserved
- * - form editing + save simulation
- * - approval button (onApprove) optional
+ * - Includes loading, form editing + save simulation.
+ * - Approval actions & export/download functionality.
  */
 
 export default function ProfilePage() {
-  const { user: authUser } = useAuth() || {};
+  const auth = useAuth();
+  const { user: authUser, updateCustomer } = auth || {};
+  const { customer, loading: customerLoading, refreshCustomer } = useCustomer();
+
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -26,7 +29,8 @@ export default function ProfilePage() {
   const [result, setResult] = useState(null);
 
   const navigate = useNavigate();
-  // combined form
+
+  // Form data with comprehensive fields
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -41,45 +45,51 @@ export default function ProfilePage() {
     monthlyIncome: "",
     pan: "",
     aadhaar: "",
+    dateOfBirth: "",
+    age: "",
   });
 
+  // Populate form from user and customer data
   useEffect(() => {
-    setLoading(true);
-    // simulate fetch user profile
-    const t = setTimeout(() => {
-      const mock = {
-        name: authUser?.name ?? "Arnab Ghosh",
-        email: authUser?.email ?? "arnab@example.com",
-        phone: authUser?.phone ?? "+91 98765 43210",
-        address:
-          authUser?.address ??
-          "12/4, Park Street, Kolkata, West Bengal, India - 700017",
-        bankName: "HDFC Bank",
-        accountMasked: "XXXXXX1234",
-        ifsc: "HDFC0001234",
-        nominee: "S. Ghosh",
-        nomineeContact: "+91 99999 88888",
-        employment: "Clinic Owner",
-        monthlyIncome: "125,000",
-        pan: "ABCDE1234F",
-        aadhaar: "XXXX-XXXX-1234",
+    if (!customerLoading && customer) {
+      const mapped = {
+        name: customer.full_name || authUser?.name || "",
+        email: authUser?.email || "",
+        phone: authUser?.phone || customer.phone || "",
+        address: customer.address || "",
+        bankName: customer.bank_name || "",
+        accountMasked: customer.account_number
+          ? "XXXXXX" + customer.account_number.slice(-4)
+          : "",
+        ifsc: customer.ifsc_code || "",
+        nominee: customer.nominee || "",
+        nomineeContact: customer.nominee_contact || "",
+        employment: customer.profession || "",
+        monthlyIncome: customer.annual_income
+          ? (customer.annual_income / 12).toFixed(2)
+          : "",
+        pan: customer.pan_no || "",
+        aadhaar: customer.aadhaar_no || "",
+        dateOfBirth: customer.date_of_birth || "",
+        age: customer.age || "",
       };
-      setFormData(mock);
+      setFormData(mapped);
       setLoading(false);
-    }, 700);
-    return () => clearTimeout(t);
-  }, [authUser]);
+    }
+  }, [customer, customerLoading, authUser]);
 
+  // Initials for avatar fallback
   const initials = useMemo(() => {
-    const nm = formData.name || formData.email || "U";
-    return nm
+    const source = formData.name || formData.email || "U";
+    return source
       .split(" ")
-      .map((p) => p[0])
+      .map((part) => part[0])
       .join("")
       .slice(0, 2)
       .toUpperCase();
   }, [formData]);
 
+  // Avatar file handler
   const handleAvatar = (file) => {
     if (!file) {
       setAvatarPreview(null);
@@ -90,34 +100,68 @@ export default function ProfilePage() {
     reader.readAsDataURL(file);
   };
 
+  // Form field change handler
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData((s) => ({ ...s, [name]: value }));
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
+  // Save profile data using real API call
   const handleSave = async () => {
     setSaving(true);
     setResult(null);
     try {
-      // simulate API call
-      await new Promise((r) => setTimeout(r, 900));
+      if (!updateCustomer) {
+        throw new Error("Update function not available");
+      }
+
+      // Prepare data for API
+      const updateData = {
+        full_name: formData.name,
+        profession: formData.employment,
+        annual_income: formData.monthlyIncome ? parseFloat(formData.monthlyIncome) * 12 : null,
+        address: formData.address,
+        nominee: formData.nominee,
+        nominee_contact: formData.nomineeContact,
+        date_of_birth: formData.dateOfBirth,
+      };
+
+      // Remove empty fields
+      Object.keys(updateData).forEach(key => {
+        if (updateData[key] === "" || updateData[key] === null || updateData[key] === undefined) {
+          delete updateData[key];
+        }
+      });
+
+      const response = await updateCustomer(updateData);
+      
+      if (response.ok) {
+        setSaving(false);
+        setEditing(false);
+        setResult({ ok: true, message: "Profile updated successfully!" });
+        setTimeout(() => setResult(null), 2500);
+        
+        // Refresh customer data
+        if (refreshCustomer) {
+          await refreshCustomer();
+        }
+      } else {
+        throw new Error(response.error || "Update failed");
+      }
+    } catch (error) {
       setSaving(false);
-      setEditing(false);
-      setResult({ ok: true, message: "Profile saved." });
-      setTimeout(() => setResult(null), 2500);
-    } catch (err) {
-      setSaving(false);
-      setResult({ ok: false, message: "Save failed." });
+      setResult({ ok: false, message: error.message || "Save failed." });
       setTimeout(() => setResult(null), 2500);
     }
   };
 
+  // Approve action simulation (admin)
   const handleApprove = () => {
-    // simulate an approval action (for admins)
-    if (!confirm("Approve changes for this profile?")) return;
-    alert("Profile approved (simulated).");
+    if (!window.confirm("Approve changes for this profile?")) return;
+    window.alert("Profile approved (simulated).");
   };
 
+  // Export JSON profile
   const handleExport = () => {
     const blob = new Blob([JSON.stringify(formData, null, 2)], {
       type: "application/json",
@@ -125,13 +169,16 @@ export default function ProfilePage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `profile_export_${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `profile_export_${new Date()
+      .toISOString()
+      .slice(0, 10)}.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
   };
 
+  // Download vCard file
   const handleVCard = () => {
     const vcard = [
       "BEGIN:VCARD",
@@ -153,14 +200,15 @@ export default function ProfilePage() {
     URL.revokeObjectURL(url);
   };
 
+  // Account delete action simulation
   const handleDelete = () => {
     if (
-      !confirm(
+      !window.confirm(
         "Are you sure you want to delete your account? This is irreversible."
       )
     )
       return;
-    alert("Account deletion simulated.");
+    window.alert("Account deletion simulated.");
   };
 
   return (
@@ -174,7 +222,7 @@ export default function ProfilePage() {
           email={formData.email}
           premium={true}
           onAvatar={handleAvatar}
-          onEditToggle={() => setEditing((s) => !s)}
+          onEditToggle={() => setEditing((e) => !e)}
           editing={editing}
           disabled={loading || saving}
         />
@@ -186,9 +234,7 @@ export default function ProfilePage() {
               editing={editing}
               formData={formData}
               onChange={handleChange}
-              onSave={() => {
-                if (editing) handleSave();
-              }}
+              onSave={() => editing && handleSave()}
               onApprove={handleApprove}
               saving={saving}
             />
@@ -198,7 +244,7 @@ export default function ProfilePage() {
             <SecurityCard
               loading={loading}
               security={{}}
-              onManage={() => alert("Manage security (simulated)")}
+              onManage={() => window.alert("Manage security (simulated)")}
             />
             <KycCard
               loading={loading}
@@ -228,6 +274,16 @@ export default function ProfilePage() {
           </div>
         </div>
       </div>
+
+      {result && (
+        <div
+          className={`fixed bottom-6 right-8 z-50 px-6 py-3 rounded-lg shadow-lg ${
+            result.ok ? "bg-green-700 text-white" : "bg-red-600 text-white"
+          }`}
+        >
+          {result.message}
+        </div>
+      )}
     </DashboardLayout>
   );
 }

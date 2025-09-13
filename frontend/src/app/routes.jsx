@@ -4,7 +4,8 @@ import { AuthPage } from "../features/auth/pages/AuthPage";
 import { UserDashboard } from "../features/dashboard/pages/UserDashboard";
 import { LoanApplicationForm } from "../features/loans/pages/LoanApplicationForm";
 import { MyLoans } from "../features/loans/pages/MyLoans";
-import { useAuth } from "./providers/AuthProvider";
+import PaymentsPage from "../features/payments/pages/PaymentsPage";
+import { useAuth } from "../context/AuthContext";
 
 const ProtectedRoute = ({ children }) => {
   const { user } = useAuth();
@@ -43,6 +44,14 @@ export default function AppRoutes() {
         element={
           <ProtectedRoute>
             <MyLoans />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/payments"
+        element={
+          <ProtectedRoute>
+            <PaymentsPage />
           </ProtectedRoute>
         }
       />

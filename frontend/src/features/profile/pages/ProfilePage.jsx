@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { DashboardLayout } from "@components/layout/DashboardLayout";
 import { useAuth } from "@context/AuthContext";
 import useCustomer from "@features/profile/hooks/useCustomer";
-
+import useKYC from "@features/profile/hooks/useKyc";
 import ProfileHeader from "@features/profile/components/ProfileHeader";
 import ProfileDetails from "@features/profile/components/ProfileDetails";
 import SecurityCard from "@features/profile/components/SecurityCard";
@@ -21,7 +21,12 @@ export default function ProfilePage() {
   const auth = useAuth();
   const { user: authUser, updateCustomer } = auth || {};
   const { customer, loading: customerLoading, refreshCustomer } = useCustomer();
-
+  const {
+    kyc,
+    loading: kycLoading,
+    // error: kycError,
+    // refresh: refreshKyc,
+  } = useKYC();
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);

@@ -266,6 +266,7 @@ export default function SignupForm({ onToggleMode = () => {} }) {
         bank_name: details.bank_name || null,
         account_number: details.account_no || null,
         ifsc_code: details.ifsc || null,
+        account_type: details.account_type || null,
       };
 
       if (typeof registerCustomer === "function") {
@@ -347,7 +348,7 @@ export default function SignupForm({ onToggleMode = () => {} }) {
       try {
         localStorage.setItem("kyc_pending", "true");
         setSkippedReminderShown(true);
-      } catch (_) {
+      } catch {
         // ignore localStorage errors
       }
 

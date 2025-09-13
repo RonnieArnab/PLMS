@@ -1,7 +1,7 @@
 import pool from "../config/db.js";
 import argon2 from "argon2";
 import jwt from "jsonwebtoken";
-import { badRequest, conflict, serverError } from "./responseHeplers.js";
+import { badRequest, conflict, serverError } from "./responseHelpers.js";
 
 function generateTokens(user) {
   const accessToken = jwt.sign(
@@ -188,10 +188,43 @@ export const registerCustomer = async (req, res) => {
       });
     }
 
+    // Handle bank account creation if bank details provided
+    let accountIdToUse = null;
+    let createdNewBankAccount = false;
+    const { bank_name, account_number, ifsc_code, account_type } = req.body;
+
+    if (bank_name && account_number) {
+      const accCheck = await client.query(
+        "SELECT account_id FROM bank_accounts WHERE account_number = $1",
+        [account_number]
+      );
+      if (accCheck.rows.length) {
+        accountIdToUse = accCheck.rows[0].account_id;
+      } else {
+        const insertAccQ = `
+          INSERT INTO bank_accounts
+            (bank_name, branch_name, ifsc_code, account_number, account_type, is_primary, created_at)
+          VALUES ($1,$2,$3,$4,$5,$6,NOW())
+          RETURNING account_id
+        `;
+        const accValues = [
+          bank_name,
+          null, // branch_name
+          ifsc_code || null,
+          account_number,
+          account_type || null,
+          true, // is_primary for new registrations
+        ];
+        const ai = await client.query(insertAccQ, accValues);
+        accountIdToUse = ai.rows[0].account_id;
+        createdNewBankAccount = true;
+      }
+    }
+
     // Insert customerprofile
     const custInsertQ = `INSERT INTO customerprofile
-      (user_id, full_name, aadhaar_no, pan_no, profession, years_experience, annual_income, address)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      (user_id, full_name, aadhaar_no, pan_no, profession, years_experience, annual_income, address, account_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
       RETURNING customer_id, user_id, full_name, aadhaar_no, pan_no, profession, years_experience, annual_income, kyc_status, address, account_id, created_at`;
     const custRes = await client.query(custInsertQ, [
       userId,
@@ -202,8 +235,17 @@ export const registerCustomer = async (req, res) => {
       years_experience ?? null,
       annual_income ?? null,
       address || null,
+      accountIdToUse || null,
     ]);
     const createdProfile = custRes.rows[0];
+
+    // Update bank account with customer_id if we created a new account
+    if (accountIdToUse && createdProfile.customer_id && createdNewBankAccount) {
+      await client.query(
+        "UPDATE bank_accounts SET customer_id = $1 WHERE account_id = $2",
+        [createdProfile.customer_id, accountIdToUse]
+      );
+    }
 
     // If we created a new user just now, issue tokens and store refresh_token
     let accessToken = null;

@@ -1,7 +1,7 @@
 import React from "react";
 import { Card } from "@components/ui/Card.jsx";
 import { Button } from "@components/ui/Button.jsx";
-import { CreditCard, CalendarDays, CheckCircle, FileText } from "lucide-react";
+import { CreditCard, CalendarDays, CheckCircle, FileText, AlertCircle } from "lucide-react";
 import { Text } from "@components/ui/Text.jsx";
 
 export default function MainPaymentCard({

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useNavigate } from "react-router-dom";
+import { AnimatePresence } from "framer-motion";
 import { DollarSign, Calendar, CreditCard, FileText } from "lucide-react";
 import { DashboardLayout } from "@components/layout/DashboardLayout";
 import MotionFadeIn from "@components/ui/MotionFadeIn.jsx";
@@ -61,6 +62,7 @@ const schemaLoans = [
 ];
 
 export function MyLoans() {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -100,7 +102,7 @@ export function MyLoans() {
 
   const handleView = (loan) => console.log("view", loan.id);
   const handleDownload = (loan) => console.log("download", loan.id);
-  const handlePay = (loan) => console.log("pay", loan.id);
+  const handlePay = (loan) => navigate(`/payments?loan=${loan.id}`);
 
   return (
     <DashboardLayout>
@@ -190,12 +192,8 @@ export function MyLoans() {
         </MotionFadeIn>
 
         <AnimatePresence mode="wait">
-          <motion.div
+          <div
             key={activeTab + (loading ? "-loading" : "")}
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -12 }}
-            transition={{ duration: 0.28 }}
             className="space-y-6">
             {loading ? (
               Array.from({ length: 2 }).map((_, i) => (
@@ -229,7 +227,7 @@ export function MyLoans() {
                 </Card>
               </MotionFadeIn>
             )}
-          </motion.div>
+          </div>
         </AnimatePresence>
       </div>
     </DashboardLayout>

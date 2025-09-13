@@ -5,6 +5,17 @@ import { CreditCard } from "lucide-react";
 import { Badge } from "@components/ui/Badge.jsx";
 import { Button } from "@components/ui/Button.jsx";
 
+function StatusBadge({ status }) {
+  const s = String(status ?? "").toUpperCase();
+  if (s === "VERIFIED" || s === "AUTO_APPROVED")
+    return <Badge variant="success">Verified</Badge>;
+  if (s === "PENDING") return <Badge variant="warning">Pending</Badge>;
+  if (s === "NEEDS_REVIEW")
+    return <Badge variant="warning">Needs review</Badge>;
+  if (s === "REJECTED") return <Badge variant="danger">Rejected</Badge>;
+  return <Badge variant="secondary">Not submitted</Badge>;
+}
+
 export default function KycCard({ loading, kyc = {}, onUpdate }) {
   return (
     <MotionFadeIn>
@@ -21,28 +32,17 @@ export default function KycCard({ loading, kyc = {}, onUpdate }) {
             <div className="space-y-3">
               <div className="h-4 w-48 bg-base-200 rounded animate-pulse" />
               <div className="h-4 w-48 bg-base-200 rounded animate-pulse" />
-              <div className="h-4 w-48 bg-base-200 rounded animate-pulse" />
             </div>
           ) : (
             <>
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">PAN Verification</span>
-                  <Badge variant="success" size="sm">
-                    Verified
-                  </Badge>
+                  <StatusBadge status={kyc.pan_status} />
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">Aadhaar eKYC</span>
-                  <Badge variant="success" size="sm">
-                    Verified
-                  </Badge>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">Bank Account</span>
-                  <Badge variant="warning" size="sm">
-                    Pending
-                  </Badge>
+                  <StatusBadge status={kyc.aadhaar_status} />
                 </div>
               </div>
 

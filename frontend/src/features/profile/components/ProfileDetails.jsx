@@ -67,6 +67,13 @@ export default function ProfileDetails({
                 onChange={onChange}
                 placeholder="Phone number"
               />
+              <Input
+                name="dateOfBirth"
+                type="date"
+                value={formData.dateOfBirth}
+                onChange={onChange}
+                placeholder="Date of Birth"
+              />
               <div>
                 <label className="label">
                   <span className="label-text">Address</span>
@@ -185,6 +192,23 @@ export default function ProfileDetails({
                   </Text>
                   <div className="font-medium mt-1">
                     {formData.address || "—"}
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-lg bg-base-200/50">
+                  <Text variant="muted" className="text-xs">
+                    Date of Birth
+                  </Text>
+                  <div className="font-medium mt-1">
+                    {formData.dateOfBirth ? new Date(formData.dateOfBirth).toLocaleDateString() : "—"}
+                  </div>
+                </div>
+                <div className="p-3 rounded-lg bg-base-200/50">
+                  <Text variant="muted" className="text-xs">
+                    Age
+                  </Text>
+                  <div className="font-medium mt-1">
+                    {formData.age ? `${formData.age} years` : "—"}
                   </div>
                 </div>
               </div>

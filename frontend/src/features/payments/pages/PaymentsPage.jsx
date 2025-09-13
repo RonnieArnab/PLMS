@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { DashboardLayout } from "@components/layout/DashboardLayout";
 import MotionFadeIn from "@components/ui/MotionFadeIn.jsx";
 import { Paper } from "@components/ui/Paper.jsx";
@@ -13,63 +14,116 @@ import UpcomingPayments from "@features/payments/components/UpcomingPayments.jsx
 import PaymentHistory from "@features/payments/components/PaymentHistory.jsx";
 import PaymentModal from "@features/payments/components/PaymentModal.jsx";
 import { downloadReceiptPdf } from "@features/payments/utils/receiptUtils";
+import { useAuth } from "@context/AuthContext";
+import { PaymentsService } from "@services/paymentService";
 
 import { Download } from "lucide-react";
 import { AnimatePresence } from "framer-motion";
 
-const mockDues =
-  "/* keep your mock data in the app or import from a shared mock file */";
-
 export default function PaymentsPage() {
+  const { user, fetchCustomer } = useAuth();
+  const [searchParams] = useSearchParams();
+  const loanId = searchParams.get('loan');
+
   // copy state/logic from original page
   const [dues, setDues] = useState(null);
   const [paymentsHistory, setPaymentsHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [result, setResult] = useState(null);
+  const [profileData, setProfileData] = useState(null);
 
   useEffect(() => {
-    setLoading(true);
-    const t = setTimeout(() => {
-      // replace with real fetch
-      setDues(
-        window.__MOCK_DUES__ || {
+    const fetchData = async () => {
+      if (!user?.id) return;
+
+      setLoading(true);
+      try {
+        // Fetch complete profile data
+        const profileResponse = await fetchCustomer();
+        if (profileResponse?.ok) {
+          const profile = profileResponse.customer || profileResponse.user;
+          setProfileData(profile);
+          console.log('Profile data fetched:', profile);
+        }
+
+        // Fetch payments data
+        const paymentsResponse = loanId ? await PaymentsService.getByLoan(loanId) : await PaymentsService.getByUser(user.id);
+        console.log('Payments data:', paymentsResponse);
+
+        if (paymentsResponse && paymentsResponse.data) {
+          const payments = paymentsResponse.data;
+          setPaymentsHistory(payments);
+
+          // Set up payment dues data
+          if (payments.length > 0) {
+            const lastPayment = payments[0];
+            setDues({
+              totalDue: 2500,
+              dueDate: "2025-09-15",
+              lastPayment: lastPayment,
+              upcomingPayments: [
+                { id: "pay_20250915", date: "2025-09-15", amount: 2500, status: "due" },
+                { id: "pay_20251015", date: "2025-10-15", amount: 2500, status: "upcoming" },
+              ],
+            });
+          } else {
+            // Set default dues if no payments found
+            setDues({
+              totalDue: 2500,
+              dueDate: "2025-09-15",
+              lastPayment: {
+                id: "N/A",
+                date: "No payments yet",
+                amount: 0,
+                method: "N/A",
+                ref: "N/A"
+              },
+              upcomingPayments: [
+                { id: "pay_20250915", date: "2025-09-15", amount: 2500, status: "due" },
+                { id: "pay_20251015", date: "2025-10-15", amount: 2500, status: "upcoming" },
+              ],
+            });
+          }
+        }
+      } catch (error) {
+        console.error('API Error:', error);
+        // Fallback to basic data
+        setDues({
           totalDue: 2500,
           dueDate: "2025-09-15",
           lastPayment: {
-            id: "pay_20250815",
-            date: "2025-08-15",
-            amount: 2500,
-            method: "UPI",
-            ref: "TRX12345",
-            payer: { name: "Arnab Ghosh", email: "arnab@example.com" },
+            id: "N/A",
+            date: "No payments yet",
+            amount: 0,
+            method: "N/A",
+            ref: "N/A"
           },
           upcomingPayments: [
-            {
-              id: "pay_20250915",
-              date: "2025-09-15",
-              amount: 2500,
-              status: "due",
-            },
-            {
-              id: "pay_20251015",
-              date: "2025-10-15",
-              amount: 2500,
-              status: "upcoming",
-            },
+            { id: "pay_20250915", date: "2025-09-15", amount: 2500, status: "due" },
+            { id: "pay_20251015", date: "2025-10-15", amount: 2500, status: "upcoming" },
           ],
-        }
-      );
-      setPaymentsHistory(window.__MOCK_HISTORY__ || []);
-      setLoading(false);
-    }, 700);
-    return () => clearTimeout(t);
-  }, []);
+        });
+        setPaymentsHistory([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [user?.id, loanId]);
 
   const totalPaid = useMemo(
     () => paymentsHistory.reduce((s, p) => s + (p.amount || 0), 0),
     [paymentsHistory]
   );
+
+  // Create download handler that includes user details
+  const handleDownloadReceipt = (payment) => {
+    // Use complete profile data if available, otherwise fall back to user from auth
+    const userProfile = profileData || user;
+    downloadReceiptPdf(payment, userProfile);
+  };
 
   const handleCompletePayment = () => setModalOpen(true);
   const handlePaymentSuccess = (payment) => {
@@ -90,7 +144,7 @@ export default function PaymentsPage() {
             <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
               <div>
                 <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight">
-                  Make a Payment
+                  {loanId ? `Make Payment for Loan ${loanId}` : 'Make a Payment'}
                 </h1>
                 <Text variant="muted" className="mt-2">
                   Manage your loan payments, download PDF receipts and monthly
@@ -133,7 +187,7 @@ export default function PaymentsPage() {
           <MainPaymentCard
             loading={loading}
             dues={dues || {}}
-            onDownloadLastReceipt={(p) => downloadReceiptPdf(p)}
+            onDownloadLastReceipt={handleDownloadReceipt}
             onPay={handleCompletePayment}
             result={result}
           />
@@ -143,7 +197,7 @@ export default function PaymentsPage() {
           <UpcomingPayments
             loading={loading}
             upcoming={dues?.upcomingPayments || []}
-            onDownload={(p) => downloadReceiptPdf(p)}
+            onDownload={handleDownloadReceipt}
           />
         </MotionFadeIn>
 
@@ -151,7 +205,7 @@ export default function PaymentsPage() {
           <PaymentHistory
             loading={loading}
             history={paymentsHistory}
-            onDownload={(p) => downloadReceiptPdf(p)}
+            onDownload={handleDownloadReceipt}
           />
         </MotionFadeIn>
 

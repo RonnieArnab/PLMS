@@ -10,6 +10,7 @@ import QuickActions from "@features/profile/components/QuickActions.jsx";
 import { Text } from "@components/ui/Text.jsx";
 import { useNavigate } from "react-router-dom";
 
+import useKYC from "@features/profile/hooks/useKyc";
 /**
  * Top-level Profile page assembled from smaller components.
  * - loading skeletons preserved
@@ -43,6 +44,12 @@ export default function ProfilePage() {
     aadhaar: "",
   });
 
+  const {
+    kyc,
+    loading: kycLoading,
+    error: kycError,
+    refresh: refreshKyc,
+  } = useKYC();
   useEffect(() => {
     setLoading(true);
     // simulate fetch user profile
@@ -201,8 +208,13 @@ export default function ProfilePage() {
               onManage={() => alert("Manage security (simulated)")}
             />
             <KycCard
-              loading={loading}
-              kyc={{}}
+              loading={kycLoading}
+              kyc={{
+                pan_status: kyc?.pan?.status,
+                aadhaar_status: kyc?.aadhaar?.status,
+                pan: kyc?.pan,
+                aadhaar: kyc?.aadhaar,
+              }}
               onUpdate={() => navigate("/profile/kyc")}
             />
             <div>

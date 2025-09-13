@@ -10,6 +10,12 @@ export const API_ROUTES = {
   customer: {
     register: "/api/customer/register",
     me: "/api/customer/me", // GET & PATCH for profile
-    kyc: "/api/customer/kyc", // POST for uploading kyc documents
+    // legacy combined endpoint removed — frontend now calls /api/kyc directly
+    // kyc: "/api/customer/kyc",
+  },
+  kyc: {
+    aadhaar: "/api/kyc/aadhaar",
+    pan: "/api/kyc/pan",
+    downloadXml: (fileId) => `/api/kyc/download-xml/${fileId}`,
   },
 };

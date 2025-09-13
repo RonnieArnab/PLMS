@@ -91,13 +91,14 @@ async function fetchCombinedUser(userId) {
     SELECT u.user_id, u.email, u.role, u.phone_number,
            c.customer_id, c.full_name, c.aadhaar_no, c.pan_no, c.profession,
            c.years_experience, c.annual_income, c.kyc_status, c.address, c.account_id,
-           c.pan_file_path, c.aadhaar_file_path, c.created_at as customer_created_at, u.created_at as user_created_at
+           c.created_at as customer_created_at, u.created_at as user_created_at
     FROM users u
     LEFT JOIN customerprofile c ON c.user_id = u.user_id
     WHERE u.user_id = $1
     LIMIT 1
   `;
   const r = await pool.query(q, [userId]);
+
   if (!r.rows.length) return null;
   const row = r.rows[0];
   return {
@@ -116,8 +117,6 @@ async function fetchCombinedUser(userId) {
     kyc_status: row.kyc_status || null,
     address: row.address || null,
     account_id: row.account_id || null,
-    pan_file_path: row.pan_file_path || null, // relative path e.g. uploads/kyc/...
-    aadhaar_file_path: row.aadhaar_file_path || null,
     customer_created_at: row.customer_created_at || null,
   };
 }

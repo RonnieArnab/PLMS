@@ -1,11 +1,15 @@
--- ==========================================
--- Loan Management System Schema (PostgreSQL) - Cleaned + UUID keys + refresh_token
--- ==========================================
+-- create_schema_full_with_kyc.sql
+-- Loan Management System with per-document KYC (complete recreate)
+-- WARNING: destructive. Drops tables first.
 
--- Enable UUID generation (pgcrypto provides gen_random_uuid())
+BEGIN;
+
+-- enable uuid functions
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- Drop tables if already exist (order handled by CASCADE)
+-- DROP existing tables to fully recreate schema (order handled via CASCADE)
+DROP TABLE IF EXISTS kyc_records CASCADE;
+DROP TABLE IF EXISTS kyc_files CASCADE;
 DROP TABLE IF EXISTS payments CASCADE;
 DROP TABLE IF EXISTS notifications CASCADE;
 DROP TABLE IF EXISTS repaymentschedule CASCADE;
@@ -29,8 +33,20 @@ CREATE TABLE users (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- ================== ADMIN PROFILE ==================
+CREATE TABLE adminprofile (
+    admin_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL UNIQUE REFERENCES users(user_id) ON DELETE CASCADE,
+    full_name VARCHAR(150) NOT NULL,
+    department VARCHAR(100),
+    designation VARCHAR(100),
+    is_superadmin BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- ================== CUSTOMER PROFILE ==================
--- Note: user_id is UNIQUE to enforce 1:1 relationship with users when role = 'CUSTOMER'
+-- Note: full_name is required in this schema. If you create customers programmatically
+-- and don't have full_name yet, insert empty string "" (controller uses "" fallback).
 CREATE TABLE customerprofile (
     customer_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID NOT NULL UNIQUE REFERENCES users(user_id) ON DELETE CASCADE,
@@ -40,20 +56,25 @@ CREATE TABLE customerprofile (
     profession VARCHAR(100),
     years_experience INT CHECK (years_experience >= 0),
     annual_income NUMERIC(12,2) CHECK (annual_income >= 0),
-    kyc_status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (kyc_status IN ('PENDING','VERIFIED','REJECTED')),
-    address TEXT,
-    account_id UUID, -- FK added later (to avoid circular creation)
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
 
--- ================== ADMIN PROFILE ==================
-CREATE TABLE adminprofile (
-    admin_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL UNIQUE REFERENCES users(user_id) ON DELETE CASCADE,
-    full_name VARCHAR(150) NOT NULL,
-    department VARCHAR(100),
-    designation VARCHAR(100),
-    is_superadmin BOOLEAN DEFAULT FALSE,
+    -- Per-document KYC statuses (frontend can render these independently)
+    aadhaar_kyc_status VARCHAR(20) NOT NULL DEFAULT 'PENDING' 
+      CHECK (aadhaar_kyc_status IN ('PENDING','VERIFIED','REJECTED','NEEDS_REVIEW','AUTO_APPROVED')),
+    pan_kyc_status VARCHAR(20) NOT NULL DEFAULT 'PENDING' 
+      CHECK (pan_kyc_status IN ('PENDING','VERIFIED','REJECTED','NEEDS_REVIEW','AUTO_APPROVED')),
+
+    -- Backwards-compatible overall status (optional)
+    kyc_status VARCHAR(20) NOT NULL DEFAULT 'PENDING' 
+      CHECK (kyc_status IN ('PENDING','VERIFIED','REJECTED','NEEDS_REVIEW','AUTO_APPROVED')),
+
+    address TEXT,
+    account_id UUID, -- FK added after bank_accounts created (to avoid circular dependency)
+
+    -- quick references to latest kyc_records per-type (nullable)
+    latest_kyc_id UUID,             -- previous combined reference (nullable)
+    latest_aadhaar_kyc_id UUID,     -- FK to most recent AADHAAR kyc_records.id
+    latest_pan_kyc_id UUID,         -- FK to most recent PAN kyc_records.id
+
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -157,12 +178,54 @@ CREATE TABLE notifications (
     sent_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- ================== KYC FILES ==================
+CREATE TABLE kyc_files (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  customer_id UUID NULL REFERENCES customerprofile(customer_id) ON DELETE SET NULL,
+  type TEXT NOT NULL, -- 'aadhaar_pdf' | 'aadhaar_zip' | 'pan_pdf' | 'xml'
+  original_filename TEXT,
+  stored_filename TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  mime TEXT,
+  size_bytes BIGINT,
+  xml_content TEXT NULL,
+  sha256 TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
+
+-- ================== KYC RECORDS ==================
+CREATE TABLE kyc_records (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  customer_id UUID NULL REFERENCES customerprofile(customer_id) ON DELETE CASCADE,
+  kyc_type TEXT NOT NULL CHECK (kyc_type IN ('AADHAAR','PAN')),
+  source TEXT NOT NULL CHECK (source IN ('pdf','zip')),
+  file_id UUID NULL REFERENCES kyc_files(id) ON DELETE SET NULL,
+  xml_file_id UUID NULL REFERENCES kyc_files(id) ON DELETE SET NULL,
+  parsed_json JSONB,
+  confidence_score INT DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','VERIFIED','REJECTED','NEEDS_REVIEW','AUTO_APPROVED')),
+  reviewer_id UUID NULL REFERENCES adminprofile(admin_id),
+  notes TEXT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
+
+-- Add FK from customerprofile.latest_kyc_id -> kyc_records.id (nullable)
+ALTER TABLE customerprofile
+  ADD CONSTRAINT fk_customer_latest_kyc FOREIGN KEY (latest_kyc_id) REFERENCES kyc_records(id) ON DELETE SET NULL;
+
+-- Add FK from customerprofile.latest_aadhaar_kyc_id and latest_pan_kyc_id -> kyc_records(id)
+ALTER TABLE customerprofile
+  ADD CONSTRAINT fk_customer_latest_aadhaar_kyc FOREIGN KEY (latest_aadhaar_kyc_id) REFERENCES kyc_records(id) ON DELETE SET NULL;
+
+ALTER TABLE customerprofile
+  ADD CONSTRAINT fk_customer_latest_pan_kyc FOREIGN KEY (latest_pan_kyc_id) REFERENCES kyc_records(id) ON DELETE SET NULL;
+
 -- ================== INDEXES ==================
 CREATE INDEX idx_users_email ON users(email);
--- customer-specific unique identifiers indexed on customerprofile
 CREATE INDEX idx_customer_aadhaar ON customerprofile(aadhaar_no);
 CREATE INDEX idx_customer_pan ON customerprofile(pan_no);
-
 CREATE INDEX idx_loans_user ON loanapplications(user_id);
 CREATE INDEX idx_loans_product ON loanapplications(product_id);
 CREATE INDEX idx_docs_loan ON documents(loan_id);
@@ -170,8 +233,14 @@ CREATE INDEX idx_repayments_loan ON repaymentschedule(loan_id);
 CREATE INDEX idx_payments_loan ON payments(loan_id);
 CREATE INDEX idx_notifications_user ON notifications(user_id);
 
+CREATE INDEX idx_kyc_files_user ON kyc_files(user_id);
+CREATE INDEX idx_kyc_files_customer ON kyc_files(customer_id);
+CREATE INDEX idx_kyc_records_user ON kyc_records(user_id);
+CREATE INDEX idx_kyc_records_customer ON kyc_records(customer_id);
+CREATE INDEX idx_kyc_records_status ON kyc_records(status);
+CREATE INDEX idx_kyc_records_type ON kyc_records(kyc_type);
+
 -- ================== OPTIONAL: trigger to update updated_at on users ==================
--- Create function
 CREATE OR REPLACE FUNCTION trigger_set_timestamp()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -180,8 +249,43 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Attach trigger to users (keeps updated_at current)
 CREATE TRIGGER trg_users_updated_at
 BEFORE UPDATE ON users
 FOR EACH ROW
 EXECUTE FUNCTION trigger_set_timestamp();
+
+COMMIT;
+
+-- ================== CHECKPOINT QUERIES (run after migration to verify) ==================
+-- 1) List created KYC tables
+SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name IN ('kyc_files','kyc_records');
+
+-- 2) columns for kyc_files / kyc_records
+SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'kyc_files' ORDER BY ordinal_position;
+SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'kyc_records' ORDER BY ordinal_position;
+
+-- 3) Check customerprofile columns
+SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'customerprofile' ORDER BY ordinal_position;
+
+-- 4) Foreign keys referencing kyc_files/kyc_records
+SELECT
+  tc.table_name, tc.constraint_name, kcu.column_name, ccu.table_name AS foreign_table, ccu.column_name AS foreign_column
+FROM information_schema.table_constraints AS tc
+JOIN information_schema.key_column_usage AS kcu ON tc.constraint_name = kcu.constraint_name
+JOIN information_schema.constraint_column_usage AS ccu ON ccu.constraint_name = tc.constraint_name
+WHERE tc.constraint_type = 'FOREIGN KEY'
+  AND (tc.table_name IN ('kyc_files','kyc_records','customerprofile') OR ccu.table_name IN ('kyc_files','kyc_records'));
+
+-- 5) Smoke inserts (UNCOMMENT to run; replace IDs with real ones or follow sequence)
+-- INSERT INTO users (email, password_hash, role) VALUES ('test+kyc@example.com','fakehash','CUSTOMER') RETURNING user_id;
+-- INSERT INTO customerprofile (user_id, full_name) VALUES ('<USER_ID>','Test User') RETURNING customer_id;
+-- INSERT INTO kyc_files (user_id, customer_id, type, original_filename, stored_filename, file_path, mime, size_bytes) VALUES ('<USER_ID>','<CUSTOMER_ID>','aadhaar_pdf','a.pdf','a_stored.pdf','/tmp/a_stored.pdf','application/pdf',1234) RETURNING id;
+-- INSERT INTO kyc_records (user_id, customer_id, kyc_type, source, file_id, parsed_json, confidence_score, status) VALUES ('<USER_ID>','<CUSTOMER_ID>','AADHAAR','pdf','<FILE_ID>','{"name":"X","aadhaar12":"123412341234"}',2,'PENDING') RETURNING id;
+
+-- 6) Check constraints for per-document statuses
+SELECT conname, pg_get_constraintdef(oid) AS definition
+FROM pg_constraint WHERE conrelid = 'customerprofile'::regclass AND contype = 'c';
+
+-- 7) Confirm latest_aadhaar_kyc_id and latest_pan_kyc_id exist
+SELECT column_name FROM information_schema.columns WHERE table_name = 'customerprofile' AND column_name IN ('latest_aadhaar_kyc_id','latest_pan_kyc_id','latest_kyc_id');
+

@@ -81,6 +81,7 @@ export function UserDashboard() {
   const [payments, setPayments] = useState(null);
   const [portfolio, setPortfolio] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [glimpseLoading, setGlimpseLoading] = useState(false);
 
   const { isDark } = useTheme();
 
@@ -145,7 +146,7 @@ export function UserDashboard() {
     () => [
       {
         id: "Payments",
-        data: (payments || []).map((p) => ({ x: p.month, y: p.amount })),
+        data: (payments || []).map((p) => ({ x: p.month || p.date || "-", y: p.amount || p.payment_amount || 0 })),
       },
     ],
     [payments]
@@ -163,6 +164,17 @@ export function UserDashboard() {
     "Pending Applications": Clock,
     "Credit Score": CheckCircle,
   };
+
+  // prepare glimpse arrays (show up to 5)
+  const loansGlimpse = Array.isArray(applications) ? applications.slice(0, 5) : [];
+  const paymentsGlimpse = Array.isArray(payments) ? payments.slice(0, 5) : [];
+
+  // helper to derive id and title safely
+  const getLoanId = (loan) => loan?.id || loan?.loan_id || loan?.application_id || null;
+  const getLoanTitle = (loan, idx) =>
+    loan?.product_name || loan?.loan_product || loan?.purpose || `Loan ${getLoanId(loan) || idx + 1}`;
+  const getPaymentId = (p) => p?.payment_id || p?.id || null;
+  const getPaymentDesc = (p, idx) => p?.description || p?.note || p?.month || `Payment ${getPaymentId(p) || idx + 1}`;
 
   return (
     <DashboardLayout>
@@ -221,12 +233,106 @@ export function UserDashboard() {
           )}
         </div>
 
+        {/* NEW: Glimpse Row for My Loans & Payments (clickable) */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <Card className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-md font-semibold">My Loans (glimpse)</h4>
+              <div className="text-sm text-gray-500">
+                {loansGlimpse.length} shown
+              </div>
+            </div>
+
+            {glimpseLoading ? (
+              <div className="text-sm text-gray-500">Loading...</div>
+            ) : loansGlimpse.length === 0 ? (
+              <div className="text-sm text-gray-500">No loans found</div>
+            ) : (
+              <ul className="space-y-2">
+                {loansGlimpse.map((loan, i) => {
+                  const loanId = getLoanId(loan);
+                  const loanTitle = getLoanTitle(loan, i);
+                  const detailUrl = loanId ? `/loans#loans-section-${loanId}` : "/loans#loans-section";
+
+                  return (
+                    <li key={loanId || i} className="border rounded p-0">
+                      <a
+                        href={detailUrl}
+                        className="flex justify-between items-center no-underline hover:bg-base-200/60 p-3 rounded"
+                      >
+                        <div>
+                          <div className="text-sm font-medium text-current">{loanTitle}</div>
+                          <div className="text-xs text-gray-500">
+                            Amount: {loan?.amount || loan?.requested_amount || loan?.loan_amount ? `₹${inr(loan?.amount || loan?.requested_amount || loan?.loan_amount)}` : "-"}
+                          </div>
+                        </div>
+                        <div className="text-xs text-gray-600">{loan?.status || loan?.application_status || "-"}</div>
+                      </a>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+            <div className="mt-3 text-right">
+              <a href="/loans#loans-section" className="text-sm text-indigo-600 hover:underline">
+                View all loans →
+              </a>
+            </div>
+          </Card>
+
+          <Card className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-md font-semibold">Recent Payments (glimpse)</h4>
+              <div className="text-sm text-gray-500">
+                {paymentsGlimpse.length} shown
+              </div>
+            </div>
+
+            {glimpseLoading ? (
+              <div className="text-sm text-gray-500">Loading...</div>
+            ) : paymentsGlimpse.length === 0 ? (
+              <div className="text-sm text-gray-500">No payments found.</div>
+            ) : (
+              <ul className="space-y-2">
+                {paymentsGlimpse.map((pay, i) => {
+                  const payId = getPaymentId(pay);
+                  const desc = getPaymentDesc(pay, i);
+                  const detailUrl = payId ? `/payments#payments-section-${payId}` : "/payments#payments-section";
+                  const amount = pay?.amount || pay?.payment_amount || pay?.paid_amount || 0;
+
+                  return (
+                    <li key={payId || i} className="border rounded p-0">
+                      <a
+                        href={detailUrl}
+                        className="flex justify-between items-center no-underline hover:bg-base-200/60 p-3 rounded"
+                      >
+                        <div>
+                          <div className="font-medium text-sm text-current">{desc}</div>
+                          <div className="text-xs text-gray-500">{/* optional subtext */}</div>
+                        </div>
+                        <div className="text-xs text-gray-600">₹{inr(amount)}</div>
+                      </a>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+
+            <div className="mt-3 text-right">
+              <a href="/payments#payments-section" className="text-sm text-indigo-600 hover:underline">
+                View all payments →
+              </a>
+            </div>
+          </Card>
+        </div>
+
         {/* Actions */}
         <div className="flex items-center justify-end gap-3">
           <Button
             variant="outline"
             onClick={() => console.log("export CSV")}
-            disabled={loading}>
+            disabled={loading}
+          >
             <Download className="w-4 h-4" />
             Export CSV
           </Button>
@@ -238,9 +344,14 @@ export function UserDashboard() {
               backgroundImage: "linear-gradient(90deg,#84cc16,#22c55e)",
               color: "white",
             }}
-            disabled={loading}>
+            disabled={loading}
+          >
             Make a Payment
           </Button>
+        </div>
+
+        <div className="mt-6 text-sm text-gray-500">
+          Showing up to 5 recent items from each list. Click into the Loans or Payments pages for full details.
         </div>
       </div>
     </DashboardLayout>

@@ -5,8 +5,11 @@ import { Input } from "@components/ui/Input.jsx";
 import { Button } from "@components/ui/Button.jsx";
 import { Text } from "@components/ui/Text.jsx";
 import { CreditCard } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+
 
 export default function HeaderHero({ onApply = () => {} }) {
+   const navigate = useNavigate();
   return (
     <MotionFadeIn delay={0.04}>
       <Paper
@@ -34,7 +37,7 @@ export default function HeaderHero({ onApply = () => {} }) {
               variant="gradient"
               size="lg"
               className="gap-2"
-              onClick={onApply}
+              onClick={() => navigate("/apply")}
               style={{
                 backgroundImage: "linear-gradient(90deg, #84cc16, #22c55e)",
                 color: "white",

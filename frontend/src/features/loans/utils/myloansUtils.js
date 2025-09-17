@@ -1,38 +1,3 @@
-// export const inr = (n) =>
-//   typeof n === "number" ? n.toLocaleString("en-IN") : n;
-
-// export const calcEmi = (principal, aprPct, months) => {
-//   if (!principal || !aprPct || !months) return 0;
-//   const r = aprPct / 12 / 100;
-//   const pow = Math.pow(1 + r, months);
-//   return Math.round((principal * r * pow) / (pow - 1));
-// };
-
-// export const toUiLoan = (row) => {
-//   const principal = row.approved_amount ?? row.loan_amount;
-//   const emi = calcEmi(principal, row.interest_rate_apr, row.tenure_months);
-//   const isActive = row.disbursement_date && (row.remaining_balance ?? 0) > 0;
-//   const isCompleted =
-//     row.disbursement_date && (row.remaining_balance ?? 0) === 0;
-
-//   return {
-//     id: String(row.loan_id),
-//     purpose: row.product_name || "Loan Product",
-//     amount: principal,
-//     interestRate: row.interest_rate_apr,
-//     term: row.tenure_months,
-//     monthlyPayment: emi,
-//     totalRepaid: row.total_repaid ?? 0,
-//     remainingBalance: row.remaining_balance ?? 0,
-//     nextPaymentDate: row.next_due_date,
-//     disbursedAt: row.disbursement_date,
-//     completedAt: row.closed_date || null,
-//     status: isCompleted ? "completed" : isActive ? "active" : "pending",
-//     _raw: row,
-//   };
-// };
-
-
 export const inr = (n) =>
   typeof n === "number" ? n.toLocaleString("en-IN") : n;
 
@@ -44,24 +9,48 @@ export const calcEmi = (principal, aprPct, months) => {
 };
 
 export function toUiLoan(apiLoan) {
+  console.log(apiLoan);
+  const appliedDate = apiLoan.applied_date ? new Date(apiLoan.applied_date) : null;
+  
+  let nextPaymentDate = null;
+  if (appliedDate) {
+    const today = new Date();
+    let monthsElapsed = (today.getFullYear() - appliedDate.getFullYear()) * 12;
+    monthsElapsed += today.getMonth() - appliedDate.getMonth();
+    if (today.getDate() < appliedDate.getDate()) {
+      monthsElapsed -= 1;
+    }
+    nextPaymentDate = new Date(appliedDate);
+    nextPaymentDate.setMonth(appliedDate.getMonth() + monthsElapsed + 1);
+  }
+
+  const principal = Number(apiLoan.loan_amount);
+  const interestRate = Number(apiLoan.interest_rate_apr);
+  const months = apiLoan.tenure_months;
+
+  const emi = calcEmi(principal, interestRate, months);
+  const totalPayable = emi * months;
+  const remaining = totalPayable - 0; // Adjust according to repayments if available
+
   return {
     id: apiLoan.loan_id,
     productId: apiLoan.product_id,
     productName: apiLoan.product_name,
-    amount: Number(apiLoan.loan_amount),
-    tenureMonths: apiLoan.tenure_months,
-    interestRate: Number(apiLoan.interest_rate_apr),
+    amount: principal,
+    tenureMonths: months,
+    interestRate: interestRate,
     status:
       ["APPROVED", "DRAFT", "PENDING"].includes(apiLoan.application_status)
         ? "active"
-        : "completed", // or use your own logic
-    approvedAmount: apiLoan.approved_amount ? Number(apiLoan.approved_amount) : null,
-    approvedDate: apiLoan.approved_date,
-    disbursementDate: apiLoan.disbursement_date,
+        : "completed",
+    approvedAmount: principal,
+    approvedDate: appliedDate,
+    disbursementDate: appliedDate,
+    monthlyPayment: emi,
     totalRepaid: 0, // If you have this, map it; else, set 0 or null
-    remainingBalance: 0, // Same as above
-    nextPaymentDate: null, // Same as above
-    closedDate: null, // Same as above
+    remainingBalance: remaining,
+    nextPaymentDate:nextPaymentDate ? nextPaymentDate.toISOString() : null,
+    closedDate: null,
     // Add any other fields your UI expects
   };
 }

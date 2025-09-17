@@ -162,6 +162,7 @@ function nameSimilarityPercent(a, b) {
   if (maxLen === 0) return 0;
   return Math.round(((maxLen - dist) / maxLen) * 100);
 }
+
 function extractAadhaarNumber(text) {
   const m = text.match(/\b(\d{4}[\s-]?\d{4}[\s-]?\d{4})\b/);
   return m ? m[1].replace(/\D/g, "") : null;
@@ -235,7 +236,7 @@ const WEIGHTS_DEFAULT = {
 function decideFinalStatus(score, hasFace = false) {
   const approveThreshold = hasFace ? 80 : 86;
   const reviewThreshold = hasFace ? 60 : 70;
-  if (score >= approveThreshold) return "APPROVED";
+  if (score >= approveThreshold) return "AUTO_APPROVED";
   if (score >= reviewThreshold) return "NEEDS_REVIEW";
   return "NEEDS_REVIEW";
 }
@@ -279,9 +280,9 @@ async function getCanonicalIdentity(client, userId) {
 
 function aggregateCustomerKycStatus(aadhaarStatus) {
   if (!aadhaarStatus) return "PENDING";
-  if (aadhaarStatus === "APPROVED") return "VERIFIED";
-  if (aadhaarStatus === "NEEDS_REVIEW") return "NEEDS_REVIEW";
-  return "PENDING";
+  if (aadhaarStatus === "AUTO_APPROVED") return "VERIFIED";
+  if (aadhaarStatus === "AUTO_APPROVED") return "AUTO_APPROVED";
+  return "AUTO_APPROVED";
 }
 
 // ---------------- Controller ----------------
@@ -348,12 +349,10 @@ export async function verifyAadhaar(req, res) {
         await client.query("ROLLBACK");
         safeUnlink(storedPath);
         logError("qpdf_missing", "qpdf binary not installed");
-        return res
-          .status(400)
-          .json({
-            ok: false,
-            error: "Server cannot decrypt PDFs (qpdf missing)",
-          });
+        return res.status(400).json({
+          ok: false,
+          error: "Server cannot decrypt PDFs (qpdf missing)",
+        });
       }
       tmpDec = path.join(UPLOAD_DIR, `dec_${Date.now()}_${uuidv4()}.pdf`);
       await qpdfDecrypt(storedPath, tmpDec, passcode);
@@ -609,7 +608,11 @@ export async function verifyAadhaar(req, res) {
         normalizedWeights.layout * signals.layout
     );
     const finalStatus =
-      score >= 82 ? "APPROVED" : score >= 55 ? "NEEDS_REVIEW" : "NEEDS_REVIEW";
+      score >= 82
+        ? "AUTO_APPROVED"
+        : score >= 55
+        ? "AUTO_APPROVED"
+        : "AUTO_APPROVED";
 
     logDetail("kyc:score", { score, finalStatus, normalizedWeights });
 

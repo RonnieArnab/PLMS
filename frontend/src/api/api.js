@@ -103,28 +103,28 @@ function ensureNoTrailingSlash(s) {
 }
 
 /**
- * Ensure the host string ends with '/api' exactly once.
- * - If host already contains '/api' (e.g. http://host/api or http://host/api/...), normalize and return.
- * - Otherwise append '/api'.
+ * Ensure the host string does NOT end with '/api' since individual routes already contain it.
+ * - If host contains '/api' at the end, remove it.
+ * - Otherwise return as is.
  */
-function ensureLeadingApiPrefix(host) {
+function ensureNoApiPrefix(host) {
   if (!host) return host;
   const cleaned = ensureNoTrailingSlash(host);
-  // If the host already contains '/api' as path segment, return cleaned (no trailing slash)
-  if (cleaned.match(/\/api(\/|$)/)) return cleaned;
-  return cleaned + "";
+  // If the host ends with '/api', remove it since routes already have '/api'
+  return cleaned.replace(/\/api$/, "");
 }
 
 // Resolve configured base in priority order
 const configured = API_ROUTES?.base || import.meta.env.VITE_API_BASE || "";
 let host = configured ? configured.toString() : "";
 if (!host) {
-  // default for local dev (edit port if your backend uses a different one)
-  host = "http://localhost:3000";
+  // default for local dev (backend runs on port 4000)
+  host = "http://localhost:4000";
 }
 
-// finalize baseURL with single /api prefix
-const baseURL = ensureLeadingApiPrefix(host);
+// finalize baseURL - routes already have /api prefix
+const baseURL = ensureNoApiPrefix(host);
+console.log('API Base URL:', baseURL);
 
 // Create axios instance
 const api = axios.create({

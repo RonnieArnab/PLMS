@@ -13,7 +13,7 @@ const formatDateTime = (date) => {
 };
 
 // Generate comprehensive payment receipt PDF
-export const downloadReceiptPdf = (payment, userDetails = null) => {
+export const downloadReceiptPdf = (payment, userDetails = null, loanDetails = null) => {
   const doc = new jsPDF();
   const primary = "#00BFA6";
   const textDark = "#0D1B2A";
@@ -31,10 +31,13 @@ export const downloadReceiptPdf = (payment, userDetails = null) => {
   doc.setFont("helvetica", "bold");
   doc.text("ProLoan", 30, 18);
 
+  // Check if this is a final payment that completed the loan
+  const isFinalPayment = loanDetails && loanDetails.isCompleted && loanDetails.remainingBalance <= 0;
+
   doc.setFontSize(22);
   doc.setTextColor(textDark);
   doc.setFont("helvetica", "bold");
-  doc.text("PAYMENT RECEIPT", 105, 35, { align: "center" });
+  doc.text(isFinalPayment ? "FINAL PAYMENT RECEIPT" : "PAYMENT RECEIPT", 105, 35, { align: "center" });
 
   // ================== RECEIPT META ==================
   doc.setFontSize(10);
@@ -147,34 +150,66 @@ export const downloadReceiptPdf = (payment, userDetails = null) => {
   doc.setFont("helvetica", "normal");
   doc.text("Successful ✅", 140, 170);
 
+  // ================== LOAN COMPLETION STATUS (if applicable) ==================
+  let nextY = 195;
+  if (isFinalPayment && loanDetails) {
+    doc.setLineWidth(2);
+    doc.setDrawColor(200);
+    doc.rect(15, nextY, 180, 25); // Loan completion box
+
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(12);
+    doc.setTextColor(primary);
+    doc.text("🎉 LOAN COMPLETED!", 20, nextY + 10);
+
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(50);
+    doc.text(`Total Amount Paid: ₹${loanDetails.totalRepaid || "0.00"}`, 20, nextY + 18);
+    doc.text(`Completion Date: ${formatDateTime(payment.date || payment.payment_date)}`, 110, nextY + 18);
+
+    nextY += 30;
+  }
+
   // ================== AMOUNT BREAKDOWN ==================
   doc.setLineWidth(2);
   doc.setDrawColor(200);
-  doc.rect(15, 195, 180, 35); // Amount breakdown box
+  doc.rect(15, nextY, 180, 35); // Amount breakdown box
 
   doc.setFont("helvetica", "bold");
   doc.setFontSize(12);
   doc.setTextColor(textDark);
-  doc.text("Amount Breakdown", 20, 205);
+  doc.text("Amount Breakdown", 20, nextY + 10);
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(11);
   doc.setTextColor(50);
 
+  // Calculate principal and interest if not provided
+  const totalAmount = parseFloat(payment.amount || payment.amount_paid || 0);
+  const principalAmount = parseFloat(payment.principal || 0);
+  const interestAmount = parseFloat(payment.interest || 0);
+
+  // If principal and interest are not set, use simple allocation (80% principal, 20% interest)
+  const calculatedPrincipal = principalAmount > 0 ? principalAmount : (totalAmount * 0.8);
+  const calculatedInterest = interestAmount > 0 ? interestAmount : (totalAmount * 0.2);
+
   // Left column
-  doc.text(`Payment Mode: ${paymentMode || "N/A"}`, 20, 215);
-  doc.text(`Principal Amount: ₹${payment.principal || "0.00"}`, 20, 225);
+  doc.text(`Payment Mode: ${paymentMode || "N/A"}`, 20, nextY + 20);
+  doc.text(`Principal Amount: ₹${calculatedPrincipal.toFixed(2)}`, 20, nextY + 30);
 
   // Right column
-  doc.text(`Interest Amount: ₹${payment.interest || "0.00"}`, 120, 215);
-  doc.text(`Total Amount: ₹${payment.amount || "0.00"}`, 120, 225);
+  doc.text(`Interest Amount: ₹${calculatedInterest.toFixed(2)}`, 120, nextY + 20);
+  doc.text(`Total Amount: ₹${totalAmount.toFixed(2)}`, 120, nextY + 30);
 
   // add horizontal lines to make table
   doc.setLineWidth(0.5);
-  doc.line(15, 220, 195, 220);
+  doc.line(15, nextY + 25, 195, nextY + 25);
 
   doc.setLineWidth(1);
-  doc.line(100, 195, 100, 230); // vertical middle
+  doc.line(100, nextY, 100, nextY + 35); // vertical middle
+
+  nextY += 40;
 
   // ================== FOOTER ==================
   doc.setDrawColor(primary);

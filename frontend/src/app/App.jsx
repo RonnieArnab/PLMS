@@ -28,6 +28,7 @@ import { LoanAppProvider } from "@features/loans";
 import CustomerDetailsPage from "@features/auth/pages/CustomerDetailsPage.jsx"; // canonical details page
 import KycReviewPage from "@features/profile/pages/KycReviewPage";
 import KycUpdatePage from "@features/profile/pages/KycUpdatePage";
+import KycGate from "@features/loans/pages/KycGate";
 
 const AppContent = () => {
   const { user } = useAuth();
@@ -120,11 +121,13 @@ const AppContent = () => {
         <Route
           path="/apply"
           element={
-            <LoanAppProvider>
-              <ProtectedRoute>
-                <LoanApplicationForm />
-              </ProtectedRoute>
-            </LoanAppProvider>
+            <ProtectedRoute>
+              <KycGate>
+                <LoanAppProvider>
+                  <LoanApplicationForm />
+                </LoanAppProvider>
+              </KycGate>
+            </ProtectedRoute>
           }
         />
 
@@ -132,7 +135,9 @@ const AppContent = () => {
           path="/loans"
           element={
             <ProtectedRoute>
-              <MyLoans />
+              <KycGate>
+                <MyLoans />
+              </KycGate>
             </ProtectedRoute>
           }
         />
@@ -141,7 +146,9 @@ const AppContent = () => {
           path="/payments"
           element={
             <ProtectedRoute>
+              <KycGate>
               <PaymentPage />
+              </KycGate>
             </ProtectedRoute>
           }
         />

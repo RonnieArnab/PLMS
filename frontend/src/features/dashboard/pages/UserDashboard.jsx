@@ -1,4 +1,3 @@
-// src/pages/UserDashboard.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { DashboardLayout } from "@components/layout/DashboardLayout";
 import HeaderHero from "@features/dashboard/components/HeaderHero.jsx";
@@ -7,14 +6,16 @@ import ChartCards from "@features/dashboard/components/ChartCards.jsx";
 import ApplicationsTable from "@features/dashboard/components/ApplicationsTable.jsx";
 import { Grid } from "@components/ui/Grid.jsx";
 import { Button } from "@components/ui/Button.jsx";
-
+import { useAuth } from "@context/AuthContext";
 import { useTheme } from "@context/ThemeContext";
 import {
   fetchDashboardStats,
+  initializeStats,
   fetchLoanApplications,
   fetchPaymentHistory,
   fetchPortfolioBreakdown,
 } from "@services/dashboardService";
+
 import { Layers, TrendingUp, Clock, CheckCircle, Download } from "lucide-react";
 import { Card } from "@components/ui/Card.jsx";
 
@@ -29,7 +30,7 @@ async function apiHandler(fn, fallback) {
   }
 }
 
-// ✅ Skeleton loaders
+// ✅ Skeleton loaders omitted for brevity — same as your code
 function StatSkeleton() {
   return (
     <Card className="p-4 rounded-lg shadow-sm">
@@ -72,81 +73,79 @@ function TableSkeleton() {
   );
 }
 
-// ✅ Currency formatter
 const inr = (n) => (typeof n === "number" ? n.toLocaleString("en-IN") : n);
 
 export function UserDashboard() {
   const [stats, setStats] = useState(null);
-  const [applications, setApplications] = useState(null);
+  const [applications, setApplications] = useState([]);
   const [payments, setPayments] = useState(null);
   const [portfolio, setPortfolio] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [customData, setCustomData] = useState([]);
   const [glimpseLoading, setGlimpseLoading] = useState(false);
 
   const { isDark } = useTheme();
+  const { user } = useAuth();
 
   useEffect(() => {
     let mounted = true;
 
-    (async () => {
+    const loadData = async () => {
       setLoading(true);
+      if (user?.id) {
+        await initializeStats(user.id); // ✅ Ensure stats are initialized first
 
-      const [s, a, p, b] = await Promise.all([
-        apiHandler(fetchDashboardStats, [
-          { title: "Active Loans", value: 2, diff: 12 },
-          { title: "Pending Applications", value: 1, diff: -5 },
-          { title: "Total Borrowed", value: 125000, diff: 8 },
-          { title: "Credit Score", value: 785, diff: 15 },
-        ]),
-        apiHandler(fetchLoanApplications, [
-          {
-            id: 1,
-            amount: 50000,
-            purpose: "Practice Equipment",
-            status: "approved",
-            submittedAt: new Date("2024-01-15").getTime(),
-          },
-          {
-            id: 2,
-            amount: 75000,
-            purpose: "Office Setup",
-            status: "under-review",
-            submittedAt: new Date("2024-01-20").getTime(),
-          },
-        ]),
-        apiHandler(fetchPaymentHistory, [
-          { month: "Jan", amount: 20000 },
-          { month: "Feb", amount: 25000 },
-          { month: "Mar", amount: 23000 },
-          { month: "Apr", amount: 28000 },
-          { month: "May", amount: 32000 },
-          { month: "Jun", amount: 25000 },
-        ]),
-        apiHandler(fetchPortfolioBreakdown, [
-          { name: "Equipment Loan", value: 50000 },
-          { name: "Office Setup", value: 75000 },
-        ]),
-      ]);
+        const s = await fetchDashboardStats(); // ✅ Fetch updated stats after init
+        const a = await fetchLoanApplications(user.id);
+       console.log("normalized apps:", a);
+        const p = await apiHandler(() => fetchPaymentHistory(user), []);
+        const b = await apiHandler(async () => {
+          const res = await fetch(
+            `http://localhost:4000/api/loan-applications/user/${user.id}`
+          );
+          const json = await res.json();
+          const data = json.data || [];
+          const mapped = data.map((item) => ({
+            name: item.product_name,
+            value: Number(item.loan_amount),
+          }));
+          setCustomData(mapped);
+          return mapped;
+        }, []);
 
-      if (!mounted) return;
+        if (mounted) {
+          setStats(s);
+          setApplications(a);
+          setPayments(p);
+          setPortfolio(b);
+          setLoading(false);
+        }
+      }
+    };
 
-      setStats(s);
-      setApplications(a);
-      setPayments(p);
-      setPortfolio(b);
-      setLoading(false);
-    })();
+    loadData();
 
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [user]);
 
   const lineData = useMemo(
     () => [
       {
         id: "Payments",
-        data: (payments || []).map((p) => ({ x: p.month || p.date || "-", y: p.amount || p.payment_amount || 0 })),
+        data: (payments || []).map((p) => {
+          // Handle both old hardcoded format and new API format
+          if (p.month) {
+            // Old hardcoded format
+            return { x: p.month, y: p.amount || 0 };
+          } else {
+            // New API format - group by month
+            const date = new Date(p.payment_date || p.date);
+            const month = date.toLocaleDateString('en-US', { month: 'short' });
+            return { x: month, y: parseFloat(p.amount_paid || p.amount || 0) };
+          }
+        }),
       },
     ],
     [payments]
@@ -157,7 +156,6 @@ export function UserDashboard() {
     [portfolio]
   );
 
-  // ✅ Icons for KPI cards
   const iconMap = {
     "Active Loans": Layers,
     "Total Borrowed": TrendingUp,
@@ -165,16 +163,22 @@ export function UserDashboard() {
     "Credit Score": CheckCircle,
   };
 
-  // prepare glimpse arrays (show up to 5)
   const loansGlimpse = Array.isArray(applications) ? applications.slice(0, 5) : [];
   const paymentsGlimpse = Array.isArray(payments) ? payments.slice(0, 5) : [];
 
-  // helper to derive id and title safely
   const getLoanId = (loan) => loan?.id || loan?.loan_id || loan?.application_id || null;
   const getLoanTitle = (loan, idx) =>
     loan?.product_name || loan?.loan_product || loan?.purpose || `Loan ${getLoanId(loan) || idx + 1}`;
   const getPaymentId = (p) => p?.payment_id || p?.id || null;
-  const getPaymentDesc = (p, idx) => p?.description || p?.note || p?.month || `Payment ${getPaymentId(p) || idx + 1}`;
+  const getPaymentDesc = (p, idx) => {
+    // Handle real payment data format
+    if (p?.payment_date) {
+      const date = new Date(p.payment_date).toLocaleDateString('en-IN');
+      return `Payment on ${date}`;
+    }
+    // Handle old hardcoded format
+    return p?.description || p?.note || p?.month || `Payment ${getPaymentId(p) || idx + 1}`;
+  };
 
   return (
     <DashboardLayout>
@@ -214,6 +218,7 @@ export function UserDashboard() {
               <ChartSkeleton />
             </>
           ) : (
+            
             <ChartCards
               lineData={lineData}
               pieData={pieData}
@@ -225,7 +230,7 @@ export function UserDashboard() {
 
         {/* Applications Table */}
         <div>
-          <h3 className="text-lg font-semibold mb-3">Your Applications</h3>
+          <h3 className="text-lg font-semibold mb-3">     Your Loans</h3>
           {loading ? (
             <TableSkeleton />
           ) : (
@@ -235,50 +240,7 @@ export function UserDashboard() {
 
         {/* NEW: Glimpse Row for My Loans & Payments (clickable) */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <Card className="p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h4 className="text-md font-semibold">My Loans (glimpse)</h4>
-              <div className="text-sm text-gray-500">
-                {loansGlimpse.length} shown
-              </div>
-            </div>
-
-            {glimpseLoading ? (
-              <div className="text-sm text-gray-500">Loading...</div>
-            ) : loansGlimpse.length === 0 ? (
-              <div className="text-sm text-gray-500">No loans found</div>
-            ) : (
-              <ul className="space-y-2">
-                {loansGlimpse.map((loan, i) => {
-                  const loanId = getLoanId(loan);
-                  const loanTitle = getLoanTitle(loan, i);
-                  const detailUrl = loanId ? `/loans#loans-section-${loanId}` : "/loans#loans-section";
-
-                  return (
-                    <li key={loanId || i} className="border rounded p-0">
-                      <a
-                        href={detailUrl}
-                        className="flex justify-between items-center no-underline hover:bg-base-200/60 p-3 rounded"
-                      >
-                        <div>
-                          <div className="text-sm font-medium text-current">{loanTitle}</div>
-                          <div className="text-xs text-gray-500">
-                            Amount: {loan?.amount || loan?.requested_amount || loan?.loan_amount ? `₹${inr(loan?.amount || loan?.requested_amount || loan?.loan_amount)}` : "-"}
-                          </div>
-                        </div>
-                        <div className="text-xs text-gray-600">{loan?.status || loan?.application_status || "-"}</div>
-                      </a>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-            <div className="mt-3 text-right">
-              <a href="/loans#loans-section" className="text-sm text-indigo-600 hover:underline">
-                View all loans →
-              </a>
-            </div>
-          </Card>
+         
 
           <Card className="p-4">
             <div className="flex items-center justify-between mb-3">
@@ -357,3 +319,4 @@ export function UserDashboard() {
     </DashboardLayout>
   );
 }
+export default UserDashboard;

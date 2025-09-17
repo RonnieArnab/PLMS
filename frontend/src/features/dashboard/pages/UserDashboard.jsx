@@ -9,6 +9,7 @@ import { Grid } from "@components/ui/Grid.jsx";
 import { Button } from "@components/ui/Button.jsx";
 
 import { useTheme } from "@context/ThemeContext";
+import { useAuth } from "@context/AuthContext";
 import {
   fetchDashboardStats,
   fetchLoanApplications,
@@ -84,6 +85,7 @@ export function UserDashboard() {
   const [glimpseLoading, setGlimpseLoading] = useState(false);
 
   const { isDark } = useTheme();
+  const { user } = useAuth();
 
   useEffect(() => {
     let mounted = true;
@@ -92,7 +94,7 @@ export function UserDashboard() {
       setLoading(true);
 
       const [s, a, p, b] = await Promise.all([
-        apiHandler(fetchDashboardStats, [
+        apiHandler(() => fetchDashboardStats(user?.id), [
           { title: "Active Loans", value: 2, diff: 12 },
           { title: "Pending Applications", value: 1, diff: -5 },
           { title: "Total Borrowed", value: 125000, diff: 8 },
@@ -114,14 +116,7 @@ export function UserDashboard() {
             submittedAt: new Date("2024-01-20").getTime(),
           },
         ]),
-        apiHandler(fetchPaymentHistory, [
-          { month: "Jan", amount: 20000 },
-          { month: "Feb", amount: 25000 },
-          { month: "Mar", amount: 23000 },
-          { month: "Apr", amount: 28000 },
-          { month: "May", amount: 32000 },
-          { month: "Jun", amount: 25000 },
-        ]),
+        apiHandler(() => fetchPaymentHistory(user), []),
         apiHandler(fetchPortfolioBreakdown, [
           { name: "Equipment Loan", value: 50000 },
           { name: "Office Setup", value: 75000 },
@@ -146,7 +141,18 @@ export function UserDashboard() {
     () => [
       {
         id: "Payments",
-        data: (payments || []).map((p) => ({ x: p.month || p.date || "-", y: p.amount || p.payment_amount || 0 })),
+        data: (payments || []).map((p) => {
+          // Handle both old hardcoded format and new API format
+          if (p.month) {
+            // Old hardcoded format
+            return { x: p.month, y: p.amount || 0 };
+          } else {
+            // New API format - group by month
+            const date = new Date(p.payment_date || p.date);
+            const month = date.toLocaleDateString('en-US', { month: 'short' });
+            return { x: month, y: parseFloat(p.amount_paid || p.amount || 0) };
+          }
+        }),
       },
     ],
     [payments]
@@ -174,7 +180,15 @@ export function UserDashboard() {
   const getLoanTitle = (loan, idx) =>
     loan?.product_name || loan?.loan_product || loan?.purpose || `Loan ${getLoanId(loan) || idx + 1}`;
   const getPaymentId = (p) => p?.payment_id || p?.id || null;
-  const getPaymentDesc = (p, idx) => p?.description || p?.note || p?.month || `Payment ${getPaymentId(p) || idx + 1}`;
+  const getPaymentDesc = (p, idx) => {
+    // Handle real payment data format
+    if (p?.payment_date) {
+      const date = new Date(p.payment_date).toLocaleDateString('en-IN');
+      return `Payment on ${date}`;
+    }
+    // Handle old hardcoded format
+    return p?.description || p?.note || p?.month || `Payment ${getPaymentId(p) || idx + 1}`;
+  };
 
   return (
     <DashboardLayout>

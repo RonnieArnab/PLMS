@@ -26,7 +26,8 @@ export default function LoanCard({
               <div className="h-4 w-20 bg-base-200 rounded animate-pulse" />
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-2">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mt-2">
+              <div className="h-12 bg-base-200 rounded animate-pulse" />
               <div className="h-12 bg-base-200 rounded animate-pulse" />
               <div className="h-12 bg-base-200 rounded animate-pulse" />
               <div className="h-12 bg-base-200 rounded animate-pulse" />
@@ -40,7 +41,10 @@ export default function LoanCard({
     );
   }
 
-  const progress = loan.amount
+  // Calculate progress based on payment count vs total installments
+  const progress = loan.totalInstallments && loan.paymentCount !== undefined
+    ? Math.min(100, Math.round((loan.paymentCount / loan.totalInstallments) * 100))
+    : loan.amount
     ? Math.round((loan.totalRepaid / loan.amount) * 100)
     : 0;
   const statusMap = {
@@ -51,7 +55,9 @@ export default function LoanCard({
 
   return (
     <MotionFadeIn delay={index * 0.06}>
-      <Card className="rounded-lg shadow-md hover:shadow-lg transition-all">
+      <Card className={`rounded-lg shadow-md hover:shadow-lg transition-all ${
+        loan.status === "completed" ? "border-green-200 bg-green-50/30" : ""
+      }`}>
         <div className="p-6">
           <div className="flex flex-col md:flex-row justify-between items-start gap-4">
             <div>
@@ -94,15 +100,23 @@ export default function LoanCard({
                 aria-label={`Download statement ${loan.purpose}`}>
                 <Download className="w-4 h-4" /> Statement
               </Button>
+              
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mt-6">
             <div className="bg-base-200/50 p-3 rounded-md">
               <Text variant="muted" className="text-xs">
                 Loan Amount
               </Text>
               <div className="font-semibold mt-1">₹{inr(loan.amount)}</div>
+            </div>
+
+            <div className="bg-base-200/50 p-3 rounded-md">
+              <Text variant="muted" className="text-xs">
+                Total Payable
+              </Text>
+              <div className="font-semibold mt-1">₹{inr(loan.totalPayable)}</div>
             </div>
 
             <div className="bg-base-200/50 p-3 rounded-md">
@@ -134,63 +148,75 @@ export default function LoanCard({
             </div>
           </div>
 
+          {/* Show progress bar for both active and completed loans */}
+          <div className="mt-6">
+            <div className="flex justify-between items-center mb-2">
+              <Text variant="muted" className="text-sm">
+                Repayment Progress
+              </Text>
+              <div className="font-semibold">{progress}%</div>
+            </div>
+            <div className="w-full bg-base-200 rounded-full h-3 overflow-hidden">
+              <div
+                className="h-full bg-lime-400"
+                style={{
+                  width: `${Math.max(0, Math.min(100, progress))}%`,
+                }}
+              />
+            </div>
+            {/* Show payment count for completed loans */}
+            {loan.isCompleted && (
+              <div className="text-xs text-gray-500 mt-1 text-center">
+                {loan.paymentCount || 0} of {loan.totalInstallments || loan.tenureMonths} installments completed
+              </div>
+            )}
+          </div>
+
           {loan.status === "active" && (
-            <>
-              <div className="mt-6">
-                <div className="flex justify-between items-center mb-2">
-                  <Text variant="muted" className="text-sm">
-                    Repayment Progress
-                  </Text>
-                  <div className="font-semibold">{progress}%</div>
-                </div>
-                <div className="w-full bg-base-200 rounded-full h-3 overflow-hidden">
-                  <div
-                    className="h-full bg-lime-400"
-                    style={{
-                      width: `${Math.max(0, Math.min(100, progress))}%`,
-                    }}
-                  />
+            <div className="mt-6 flex items-center justify-between gap-4 border-t pt-4">
+              <div>
+                <Text variant="muted" className="text-sm">
+                  Next Payment Due
+                </Text>
+                <div className="font-semibold">
+                  {loan.nextPaymentDate
+                    ? new Date(loan.nextPaymentDate).toLocaleDateString()
+                    : "-"}{" "}
+                  • ₹{inr(loan.monthlyPayment)}
                 </div>
               </div>
 
-              <div className="mt-6 flex items-center justify-between gap-4 border-t pt-4">
-                <div>
-                  <Text variant="muted" className="text-sm">
-                    Next Payment Due
-                  </Text>
-                  <div className="font-semibold">
-                    {loan.nextPaymentDate
-                      ? new Date(loan.nextPaymentDate).toLocaleDateString()
-                      : "-"}{" "}
-                    • ₹{inr(loan.monthlyPayment)}
-                  </div>
-                </div>
-
-                <div>
-                  <Button
-                    variant="gradient"
-                    size="lg"
-                    onClick={() => onPay(loan)}
-                    style={{
-                      backgroundImage:
-                        "linear-gradient(90deg, #84cc16, #22c55e)",
-                      color: "white",
-                    }}>
-                    <CreditCard className="w-4 h-4" /> Make Payment
-                  </Button>
-                </div>
+              <div>
+                <Button
+                  variant="gradient"
+                  size="lg"
+                  onClick={() => onPay(loan)}
+                  style={{
+                    backgroundImage:
+                      "linear-gradient(90deg, #84cc16, #22c55e)",
+                    color: "white",
+                  }}>
+                  <CreditCard className="w-4 h-4" /> Make Payment
+                </Button>
               </div>
-            </>
+            </div>
           )}
 
-          {loan.status === "completed" && loan.completedAt && (
+          {loan.status === "completed" && (
             <div className="mt-6 border-t pt-4">
               <div className="flex items-center gap-3 text-emerald-600">
                 <CheckCircle2 className="w-5 h-5" />
                 <div className="font-semibold">
-                  Loan completed on{" "}
-                  {new Date(loan.completedAt).toLocaleDateString()}
+                  🎉 Loan Completed Successfully!
                 </div>
+              </div>
+              <div className="text-sm text-gray-600 mt-2">
+                All {loan.totalInstallments || loan.tenureMonths} installments have been paid.
+                {loan.paymentCount && (
+                  <span className="ml-1">
+                    ({loan.paymentCount} payments completed)
+                  </span>
+                )}
               </div>
             </div>
           )}

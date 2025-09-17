@@ -8,7 +8,7 @@ export const env = {
   // PostgreSQL
   dbUser: process.env.DB_USER || "postgres",
   dbHost: process.env.DB_HOST || "localhost",
-  dbName: process.env.DB_NAME || "loanm",
+  dbName: process.env.DB_NAME || "Loanfb",
   dbPass: process.env.DB_PASS || "Vipin@0531",
   dbPort: Number(process.env.DB_PORT) || 5432,
 
@@ -20,4 +20,8 @@ export const env = {
   // Cookie settings
   cookieSecure: process.env.COOKIE_SECURE === "true", // true in prod
   cookieSameSite: process.env.COOKIE_SAMESITE || "strict",
+
+  // Razorpay
+  razorpayKeyId: process.env.RAZORPAY_KEY_ID || "rzp_test_RIBPU0g2WXd7q9",
+  razorpayKeySecret: process.env.RAZORPAY_KEY_SECRET || "uETJvymJFR6vY5onIUft0azB",
 };

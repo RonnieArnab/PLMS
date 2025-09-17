@@ -8,8 +8,8 @@ export const env = {
   // PostgreSQL
   dbUser: process.env.DB_USER || "postgres",
   dbHost: process.env.DB_HOST || "localhost",
-  dbName: process.env.DB_NAME || "loanm",
-  dbPass: process.env.DB_PASS || "Vipin@0531",
+  dbName: process.env.DB_NAME || "PLMS_FSL",
+  dbPass: process.env.DB_PASS || "101204",
   dbPort: Number(process.env.DB_PORT) || 5432,
 
   // JWT Secrets

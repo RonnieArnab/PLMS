@@ -22,6 +22,7 @@ import ProfilePage from "@features/profile/pages/ProfilePage";
 import LandingPage from "../pages/LandingPage";
 import { LoanAppProvider } from "@features/loans";
 import KycUpdatePage from "@features/profile/pages/KycUpdatePage";
+import KycGate from "@features/loans/pages/KycGate";
 
 const AppContent = () => {
   const { user } = useAuth();
@@ -53,18 +54,23 @@ const AppContent = () => {
         <Route
           path="/apply"
           element={
-            <LoanAppProvider>
-              <ProtectedRoute>
-                <LoanApplicationForm />
-              </ProtectedRoute>
-            </LoanAppProvider>
+            <ProtectedRoute>
+              <KycGate>
+                <LoanAppProvider>
+                  <LoanApplicationForm />
+                </LoanAppProvider>
+              </KycGate>
+            </ProtectedRoute>
           }
         />
+
         <Route
           path="/loans"
           element={
             <ProtectedRoute>
-              <MyLoans />
+              <KycGate>
+                <MyLoans />
+              </KycGate>
             </ProtectedRoute>
           }
         />

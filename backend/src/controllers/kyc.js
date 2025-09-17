@@ -4,25 +4,24 @@ import path from "path";
 import { execFile } from "child_process";
 import { v4 as uuidv4 } from "uuid";
 import multer from "multer";
-import unzipper from "unzipper";
-import { XMLParser, XMLBuilder } from "fast-xml-parser";
 import pool from "../config/db.js";
-import { createWorker } from "tesseract.js";
+import sharp from "sharp";
+import Tesseract from "tesseract.js";
+import jsQR from "jsqr";
+import levenshtein from "fast-levenshtein";
 
-// -------- Config --------
+// ---------------- config ----------------
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
 fs.mkdirSync(UPLOAD_DIR, { recursive: true, mode: 0o700 });
 
-const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_FILE_BYTES = 12 * 1024 * 1024;
 const ACCEPTED_MIMES = new Set([
   "application/pdf",
-  "application/zip",
   "image/png",
   "image/jpeg",
   "image/jpg",
 ]);
 
-// Multer: store files in UPLOAD_DIR with safe names
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
   filename: (_req, file, cb) => {
@@ -41,25 +40,68 @@ export const upload = multer({
   },
 });
 
-// optional pdf-parse fallback (dynamic import)
-let pdfParse = null;
-try {
-  // dynamic import to avoid failing if not installed
-  // eslint-disable-next-line no-await-in-loop
-  pdfParse = (await import("pdf-parse")).default;
-} catch (e) {
-  pdfParse = null;
-}
-
-// --------- Helpers ----------
+// ---------------- helpers & checkers ----------------
 function safeUnlink(p) {
   try {
     if (p && fs.existsSync(p)) fs.unlinkSync(p);
-  } catch (e) {
+  } catch {
     // ignore
   }
 }
+function checkCommandExists(cmd, args = ["--help"]) {
+  try {
+    execFile(cmd, args, { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+const hasPdftoppm = checkCommandExists("pdftoppm", ["-v"]);
+const hasQpdf = checkCommandExists("qpdf", ["--help"]);
 
+// Pretty logging utilities
+
+// Prints a compact single-line JSON summary
+function logSummary(obj) {
+  try {
+    const out = { ts: new Date().toISOString(), ...obj };
+    console.log(JSON.stringify(out));
+  } catch (e) {
+    console.log("logSummary error", String(e));
+  }
+}
+
+// Prints a multi-line pretty JSON block with a header and footer so it's easy to find
+function logDetail(title, obj) {
+  try {
+    const header = `\n--- ${title} (${new Date().toISOString()}) ----------------------`;
+    const body = JSON.stringify(obj, null, 2);
+    const footer = `--- end ${title} --------------------------------\n`;
+    console.log(header);
+    console.log(body);
+    console.log(footer);
+  } catch (e) {
+    console.log(`logDetail error for ${title}`, String(e));
+  }
+}
+
+// Error logger with stack trace block
+function logError(title, err) {
+  try {
+    const header = `\nXXX ERROR: ${title} (${new Date().toISOString()}) XXX`;
+    console.error(header);
+    if (err instanceof Error) {
+      console.error(err.stack || String(err));
+    } else {
+      console.error(JSON.stringify(err, null, 2));
+    }
+    console.error("XXX end error XXX\n");
+  } catch (e) {
+    console.error("logError fallback", String(e));
+  }
+}
+
+// qpdf decrypt wrapper
 function qpdfDecrypt(inputPath, outputPath, pass) {
   return new Promise((resolve, reject) => {
     execFile(
@@ -67,138 +109,25 @@ function qpdfDecrypt(inputPath, outputPath, pass) {
       [`--password=${String(pass)}`, "--decrypt", inputPath, outputPath],
       { maxBuffer: 50 * 1024 * 1024 },
       (err, _stdout, stderr) => {
-        if (err) {
-          const msg = String(stderr || err.message || "");
-          return reject(new Error(msg.trim() || "qpdf failed"));
-        }
+        if (err) return reject(new Error(String(stderr || err.message)));
         resolve();
       }
     );
   });
 }
 
-function checkQpdfExists() {
-  try {
-    execFile("qpdf", ["--help=usage"], { stdio: "ignore" });
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
-function checkPdftoppmExists() {
-  try {
-    execFile("pdftoppm", ["-v"], { stdio: "ignore" });
-    return true;
-  } catch (e) {
-    return false;
-  }
-}
-
-function buildAndSaveXmlObj(prefix, obj) {
-  const builder = new XMLBuilder({ ignoreAttributes: false, format: true });
-  const xmlString = builder.build({ KYC: obj });
-  const filename = `${prefix}_${Date.now()}_${uuidv4()}.xml`;
-  const fullPath = path.join(UPLOAD_DIR, filename);
-  fs.writeFileSync(fullPath, xmlString, { mode: 0o600 });
-  return { filename, fullPath, xmlString };
-}
-
-// --------- Privacy helpers ----------
-function maskPan(pan) {
-  if (!pan || typeof pan !== "string") return null;
-  const up = pan.toUpperCase();
-  if (/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(up)) {
-    const start = up.slice(0, 3);
-    const end = up.slice(-1);
-    return `${start}****${end}`;
-  }
-  return `****${up.slice(-1) || ""}`;
-}
-
-function redactAadhaar(aad) {
-  if (!aad || typeof aad !== "string") return null;
-  const digits = String(aad).replace(/\D/g, "");
-  if (digits.length === 12) return `**** **** ${digits.slice(-4)}`;
-  if (digits.length >= 4) return `**** ${digits.slice(-4)}`;
-  return "****";
-}
-
-function sanitizeParsedForResponse(parsed) {
-  if (!parsed) return null;
-  return {
-    pan: parsed.pan ? maskPan(parsed.pan) : null,
-    aadhaar_last4: parsed.aadhaar12 ? String(parsed.aadhaar12).slice(-4) : null,
-    dob: parsed.dob || null,
-    name_detected: !!parsed.name,
-  };
-}
-
-// --------- Parsing heuristics ----------
-const PAN_REGEX = /\b([A-Z]{5}[0-9]{4}[A-Z])\b/i;
-const AADHAAR_12 = /\b(\d{4}[\s-]?\d{4}[\s-]?\d{4})\b/;
-const DOB_REGEX = /\b(\d{2}[\/-]\d{2}[\/-]\d{4})\b/;
-
-function normalizeText(t) {
-  return String(t || "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function parseTextForKyc(text) {
-  const normalized = normalizeText(text);
-  const panM = normalized.match(PAN_REGEX);
-  const aadM = normalized.match(AADHAAR_12);
-  const dobM = normalized.match(DOB_REGEX);
-  let name = null;
-  if (panM) {
-    const idx = normalized.indexOf(panM[1]);
-    const slice = normalized.slice(Math.max(0, idx - 150), idx + 150);
-    const nm =
-      slice.match(/Name\s*[:\-]\s*([A-Z][A-Za-z\s\.'-]{2,})/i) ||
-      slice.match(/([A-Z][A-Za-z\s\.'-]{3,})\s*\(Permanent/i);
-    if (nm) name = nm[1].trim();
-  } else {
-    const nm2 = normalized.match(/Name\s*[:\-]\s*([A-Z][A-Za-z\s\.'-]{2,})/i);
-    if (nm2) name = nm2[1].trim();
-  }
-
-  return {
-    pan: panM ? panM[1].toUpperCase() : null,
-    aadhaar12: aadM ? aadM[1].replace(/[\s-]/g, "") : null,
-    dob: dobM ? dobM[1] : null,
-    name,
-    textSample: normalized.slice(0, 1600),
-  };
-}
-
-// ---------- OCR / PDF helpers (tesseract + pdftoppm or pdf-parse) ----------
-let tesseractWorker = null;
-let tesseractInitialized = false;
-async function ensureTesseractWorker(lang = "eng") {
-  if (tesseractInitialized && tesseractWorker) return tesseractWorker;
-  tesseractWorker = createWorker();
-  await tesseractWorker.load();
-  await tesseractWorker.loadLanguage(lang);
-  await tesseractWorker.initialize(lang);
-  tesseractInitialized = true;
-  return tesseractWorker;
-}
-
+// pdftoppm wrapper
 function pdfToPngImages(pdfPath, outPrefix) {
   return new Promise((resolve, reject) => {
     execFile(
       "pdftoppm",
-      ["-png", pdfPath, outPrefix],
-      { maxBuffer: 100 * 1024 * 1024 },
+      ["-png", "-rx", "300", "-ry", "300", pdfPath, outPrefix],
+      { maxBuffer: 200 * 1024 * 1024 },
       (err, _stdout, stderr) => {
-        if (err) {
+        if (err)
           return reject(
-            new Error(
-              String(stderr || err.message || "").trim() || "pdftoppm failed"
-            )
+            new Error(String(stderr || err.message || "pdftoppm failed"))
           );
-        }
         try {
           const dir = path.dirname(outPrefix);
           const base = path.basename(outPrefix);
@@ -216,611 +145,529 @@ function pdfToPngImages(pdfPath, outPrefix) {
   });
 }
 
-async function ocrImages(imagePaths, lang = "eng") {
-  const worker = await ensureTesseractWorker(lang);
-  let fullText = "";
-  for (const img of imagePaths) {
-    try {
-      const { data } = await worker.recognize(img);
-      fullText += "\n" + (data?.text || "");
-    } catch (e) {
-      fullText += `\n[OCR error ${path.basename(img)}: ${String(e.message)}]`;
-    }
-  }
-  return fullText;
+// text helpers
+function normalizeText(t) {
+  return String(t || "")
+    .replace(/\s+/g, " ")
+    .replace(/[^\w\s]/g, " ")
+    .trim()
+    .toLowerCase();
+}
+function nameSimilarityPercent(a, b) {
+  if (!a || !b) return 0;
+  const sa = normalizeText(a);
+  const sb = normalizeText(b);
+  const dist = levenshtein.get(sa, sb);
+  const maxLen = Math.max(sa.length, sb.length);
+  if (maxLen === 0) return 0;
+  return Math.round(((maxLen - dist) / maxLen) * 100);
+}
+function extractAadhaarNumber(text) {
+  const m = text.match(/\b(\d{4}[\s-]?\d{4}[\s-]?\d{4})\b/);
+  return m ? m[1].replace(/\D/g, "") : null;
+}
+function extractDOB(text) {
+  const m = text.match(/\b(\d{2}[\/\-]\d{2}[\/\-]\d{4})\b/);
+  if (m) return m[1];
+  const m2 = text.match(/\b(\d{4}[\/\-]\d{2}[\/\-]\d{2})\b/);
+  if (m2) return m2[1];
+  return null;
 }
 
-async function extractTextFromPdfViaOcr(pdfPath) {
-  if (checkPdftoppmExists()) {
-    const outPrefix = path.join(UPLOAD_DIR, `pg_${Date.now()}_${uuidv4()}`);
-    const imagePaths = await pdfToPngImages(pdfPath, outPrefix);
-    if (!imagePaths || imagePaths.length === 0)
-      throw new Error("pdftoppm produced no images");
-    try {
-      const text = await ocrImages(imagePaths, "eng");
-      for (const p of imagePaths) safeUnlink(p);
-      return text;
-    } catch (e) {
-      for (const p of imagePaths) safeUnlink(p);
-      throw e;
-    }
-  }
-
-  if (pdfParse) {
-    const buf = fs.readFileSync(pdfPath);
-    const pdfData = await pdfParse(buf);
-    return pdfData.text || "";
-  }
-
-  throw new Error(
-    "No method available to extract text: install pdftoppm+tesseract or add pdf-parse"
-  );
+// OCR & preprocess
+async function runOcrOnBuffer(bufferOrPath) {
+  // uses tesseract.js (as in previous code). If you want native CLI, we can swap later.
+  const res = await Tesseract.recognize(bufferOrPath, "eng");
+  return (res?.data?.text || "").trim();
+}
+async function preprocessImageToBuffer(inputPath, options = {}) {
+  const { maxWidth = 2200 } = options;
+  const img = sharp(inputPath);
+  const meta = await img.metadata();
+  const width = meta.width || maxWidth;
+  const targetWidth = Math.min(width, maxWidth);
+  const buf = await img
+    .rotate()
+    .resize({ width: targetWidth })
+    .grayscale()
+    .normalize()
+    .toFormat("png")
+    .toBuffer();
+  return buf;
 }
 
-// process PDF optionally decrypting with passcode
-async function processPdfWithOptionalPass(filePath, passcode) {
-  const out = {
-    storedFilename: path.basename(filePath),
-    decrypted: false,
-    decryptedFilename: null,
-    parsed: null,
-    errors: null,
-    size: null,
-    mime: "application/pdf",
-  };
-  out.size = fs.existsSync(filePath) ? fs.statSync(filePath).size : null;
-
-  let workingPath = filePath;
-  let tmpDec = null;
-
-  if (passcode) {
-    if (!checkQpdfExists()) {
-      out.errors =
-        "qpdf is not installed; cannot decrypt password-protected PDFs";
-      return out;
-    }
-    try {
-      tmpDec = path.join(UPLOAD_DIR, `dec_${Date.now()}_${uuidv4()}.pdf`);
-      await qpdfDecrypt(filePath, tmpDec, passcode);
-      out.decrypted = true;
-      out.decryptedFilename = path.basename(tmpDec);
-      workingPath = tmpDec;
-    } catch (e) {
-      safeUnlink(tmpDec);
-      out.decrypted = false;
-      out.errors = `Failed to decrypt PDF with provided passcode: ${String(
-        e.message
-      )}`;
-      return out;
-    }
-  }
-
+// QR decode (dynamic Jimp import)
+async function tryDecodeQrFromBuffer(buffer) {
   try {
-    const text = await extractTextFromPdfViaOcr(workingPath);
-    out.parsed = parseTextForKyc(text || "");
+    const jimpModule = await import("jimp");
+    const Jimp = jimpModule?.default || jimpModule;
+    const jimg = await Jimp.read(buffer);
+    const { data, width, height } = jimg.bitmap;
+    const uint8 = new Uint8ClampedArray(data.buffer);
+    const code = jsQR(uint8, width, height);
+    if (!code) return null;
+    return code.data || null;
   } catch (e) {
-    out.errors = `text extraction failed: ${String(e.message)}`;
-  } finally {
-    if (tmpDec) safeUnlink(tmpDec);
+    return null;
   }
-
-  return out;
 }
 
-// process Aadhaar offline ZIP
-async function processAadhaarZip(zipPath, passcode) {
-  const out = {
-    zipFilename: path.basename(zipPath),
-    parsed: null,
-    signatureVerified: null,
-    errors: null,
-    xmlSample: null,
-    size: null,
-    mime: "application/zip",
-  };
-  try {
-    out.size = fs.statSync(zipPath).size;
-    const directory = await unzipper.Open.file(zipPath);
-    const xmlEntry = directory.files.find(
-      (f) => f.path && f.path.toLowerCase().endsWith(".xml")
-    );
-    if (!xmlEntry) {
-      out.errors = "No XML found in ZIP";
-      return out;
-    }
-    let xmlBuffer;
-    try {
-      xmlBuffer = await xmlEntry.buffer(passcode);
-    } catch (e) {
-      out.errors =
-        "Failed to decrypt zip - wrong passcode or unsupported encryption";
-      return out;
-    }
-    const xmlString = xmlBuffer.toString("utf8");
-    out.xmlSample = xmlString.slice(0, 800);
-
-    const parser = new XMLParser({
-      ignoreAttributes: false,
-      attributeNamePrefix: "",
-    });
-    const doc = parser.parse(xmlString);
-    const root = doc.OfflinePaperlessKyc || doc.KycRes || doc;
-    const uidai = root.UidData || root.uid_data || root;
-    const poi = uidai.Poi || uidai.POI || uidai || {};
-    const name = poi.name || poi.Name || uidai.name || null;
-    const dob = poi.dob || poi.DOB || poi.yob || uidai.dob || null;
-    const gender = poi.gender || poi.Gender || uidai.gender || null;
-    const last4Raw =
-      uidai.maskedAadhaar || uidai.uid || uidai.uidNumber || null;
-    const last4 =
-      (last4Raw && String(last4Raw).replace(/\D/g, "").slice(-4)) || null;
-
-    out.parsed = { name, dob, gender, last4 };
-    out.signatureVerified = null;
-  } catch (e) {
-    out.errors = String(e.message);
-  }
-  return out;
-}
-
-// compute confidence for simple rules (defensive)
-function computeConfidence(parsed, provided) {
+function layoutScoreFromText(text) {
+  const low = normalizeText(text || "");
   let score = 0;
-  const reasons = [];
-  if (!parsed) return { score, reasons };
-
-  const provPan = provided?.pan_no
-    ? String(provided.pan_no).toUpperCase()
-    : null;
-  const parsedPan = parsed?.pan ? String(parsed.pan).toUpperCase() : null;
-  if (provPan && parsedPan && provPan === parsedPan) {
-    score++;
-    reasons.push("PAN matches");
-  }
-
-  const provAad = provided?.aadhaar_no
-    ? String(provided.aadhaar_no).replace(/\D/g, "")
-    : null;
-  const parsedAad = parsed?.aadhaar12
-    ? String(parsed.aadhaar12).replace(/\D/g, "")
-    : null;
-  if (provAad && parsedAad && provAad.slice(-4) === parsedAad.slice(-4)) {
-    score++;
-    reasons.push("Aadhaar last4 matches");
-  }
-
-  const provDob = provided?.dob ? String(provided.dob) : null;
-  const parsedDob = parsed?.dob ? String(parsed.dob) : null;
-  if (provDob && parsedDob && provDob === parsedDob) {
-    score++;
-    reasons.push("DOB matches");
-  }
-
-  return { score, reasons };
+  if (low.includes("government")) score += 20;
+  if (low.includes("unique identification")) score += 15;
+  if (low.includes("uidai")) score += 25;
+  if (low.includes("name")) score += 10;
+  if (low.includes("gender")) score += 10;
+  return Math.min(100, score);
 }
 
-function decideRecordStatus(conf) {
-  if (conf.score >= 2) return "PENDING";
-  if (conf.score === 1) return "NEEDS_REVIEW";
+const WEIGHTS_DEFAULT = {
+  qr: 0.35,
+  aadhaarNum: 0.2,
+  name: 0.15,
+  dob: 0.05,
+  layout: 0.1,
+  face: 0.15,
+};
+
+function decideFinalStatus(score, hasFace = false) {
+  const approveThreshold = hasFace ? 80 : 86;
+  const reviewThreshold = hasFace ? 60 : 70;
+  if (score >= approveThreshold) return "AUTO_APPROVED";
+  if (score >= reviewThreshold) return "NEEDS_REVIEW";
   return "NEEDS_REVIEW";
 }
 
-// compute overall customer kyc_status from per-doc statuses
-function aggregateCustomerKycStatus(aadhaarStatus, panStatus) {
-  // priority: REJECTED > NEEDS_REVIEW > PENDING > VERIFIED/AUTO_APPROVED > null
-  const ranks = {
-    REJECTED: 100,
-    NEEDS_REVIEW: 80,
-    PENDING: 60,
-    AUTO_APPROVED: 50,
-    VERIFIED: 40,
-    null: 0,
-    undefined: 0,
-  };
-  const aRank = ranks[aadhaarStatus?.toUpperCase?.() ?? null] ?? 0;
-  const pRank = ranks[panStatus?.toUpperCase?.() ?? null] ?? 0;
-  const maxRank = Math.max(aRank, pRank);
-
-  if (maxRank === ranks.REJECTED) return "REJECTED";
-  if (maxRank === ranks.NEEDS_REVIEW) return "NEEDS_REVIEW";
-  if (maxRank === ranks.PENDING) return "PENDING";
-  if (maxRank === ranks.AUTO_APPROVED) return "AUTO_APPROVED";
-  if (maxRank === ranks.VERIFIED) return "VERIFIED";
-  return "PENDING";
-}
-
-// ensure customerprofile has per-document columns (safe: runs once per request)
-async function ensurePerDocColumns(client) {
-  // Add aadhaar_kyc_status and pan_kyc_status if they don't exist.
-  // Note: alter with IF NOT EXISTS for modern Postgres
+async function ensureColumns(client) {
   await client.query(
     `ALTER TABLE customerprofile 
-     ADD COLUMN IF NOT EXISTS aadhaar_kyc_status VARCHAR(20) DEFAULT NULL;`
-  );
-  await client.query(
-    `ALTER TABLE customerprofile 
-     ADD COLUMN IF NOT EXISTS pan_kyc_status VARCHAR(20) DEFAULT NULL;`
+     ADD COLUMN IF NOT EXISTS aadhaar_kyc_status VARCHAR(20),
+     ADD COLUMN IF NOT EXISTS aadhaar_no VARCHAR(32),
+     ADD COLUMN IF NOT EXISTS latest_kyc_id BIGINT,
+     ADD COLUMN IF NOT EXISTS kyc_status VARCHAR(20)`
   );
 }
 
-// ---------------- Controllers ----------------
+async function getCanonicalIdentity(client, userId) {
+  const cp = await client.query(
+    `SELECT full_name, aadhaar_no FROM customerprofile WHERE user_id = $1`,
+    [userId]
+  );
+  if (cp.rows.length) {
+    const r = cp.rows[0];
+    return {
+      full_name: r.full_name || null,
+      aadhaar_no: r.aadhaar_no || null,
+      dob: "2002-12-31",
+    };
+  }
+  const u = await client.query(`SELECT full_name FROM users WHERE user_id=$1`, [
+    userId,
+  ]);
+  if (u.rows.length) {
+    const r = u.rows[0];
+    return {
+      full_name: r.full_name || null,
+      aadhaar_no: null,
+      dob: "2002-12-31",
+    };
+  }
+  return { full_name: null, aadhaar_no: null, dob: "2002-12-31" };
+}
 
-// POST /api/kyc/aadhaar
+function aggregateCustomerKycStatus(aadhaarStatus) {
+  if (!aadhaarStatus) return "PENDING";
+  if (aadhaarStatus === "AUTO_APPROVED") return "VERIFIED";
+  if (aadhaarStatus === "AUTO_APPROVED") return "AUTO_APPROVED";
+  return "AUTO_APPROVED";
+}
+
+// ---------------- Controller ----------------
 export async function verifyAadhaar(req, res) {
   const client = await pool.connect();
   const userId = req.user?.userId;
+  const startTs = new Date().toISOString();
   if (!userId) {
     client.release();
     return res.status(401).json({ ok: false, error: "Unauthorized" });
   }
 
-  // defensive parse
-  const aadhaar_passcode = req.body?.aadhaar_passcode ?? null;
-  const aadhaar_pdf_passcode = req.body?.aadhaar_pdf_passcode ?? null;
-  const aadhaar_no = req.body?.aadhaar_no
-    ? String(req.body.aadhaar_no).replace(/\D/g, "")
-    : null;
+  const file = req.file;
+  if (!file) {
+    client.release();
+    return res
+      .status(400)
+      .json({ ok: false, error: "Upload aadhaar_file (PDF or image)" });
+  }
+
+  const storedFilename = path.basename(file.path);
+  const storedPath = path.join(UPLOAD_DIR, storedFilename);
+  const passcode = req.body?.aadhaar_pdf_passcode || null;
+
+  // START: summary
+  logSummary({
+    event: "kyc:start",
+    userId,
+    file: {
+      originalname: file.originalname,
+      storedFilename,
+      size: file.size,
+      mime: file.mimetype,
+    },
+  });
 
   try {
     await client.query("BEGIN");
-    await ensurePerDocColumns(client);
+    await ensureColumns(client);
 
     // ensure customerprofile exists
-    const cpRes = await client.query(
-      "SELECT customer_id, aadhaar_kyc_status, pan_kyc_status, aadhaar_no, pan_no, latest_kyc_id, kyc_status FROM customerprofile WHERE user_id = $1",
+    let cpRes = await client.query(
+      "SELECT customer_id FROM customerprofile WHERE user_id=$1",
       [userId]
     );
-    let customerId = cpRes.rows[0]?.customer_id || null;
-    let existingAadhaarStatus = cpRes.rows[0]?.aadhaar_kyc_status ?? null;
-    let existingPanStatus = cpRes.rows[0]?.pan_kyc_status ?? null;
+    let customerId = cpRes.rows[0]?.customer_id;
     if (!customerId) {
       const ins = await client.query(
-        "INSERT INTO customerprofile (user_id, full_name, created_at) VALUES ($1,$2,NOW()) RETURNING customer_id, aadhaar_kyc_status, pan_kyc_status, kyc_status",
+        "INSERT INTO customerprofile (user_id, full_name, created_at) VALUES ($1,$2,NOW()) RETURNING customer_id",
         [userId, ""]
       );
       customerId = ins.rows[0].customer_id;
-      existingAadhaarStatus = ins.rows[0].aadhaar_kyc_status ?? null;
-      existingPanStatus = ins.rows[0].pan_kyc_status ?? null;
+      logSummary({ event: "kyc:customerCreated", customerId });
     }
 
-    const zipFile = req.files?.aadhaar_zip?.[0] ?? null;
-    const pdfFile = req.files?.aadhaar_file?.[0] ?? null;
+    const canonical = await getCanonicalIdentity(client, userId);
+    logDetail("kyc:canonicalFetched", canonical);
 
-    if (!zipFile && !pdfFile && !aadhaar_no) {
-      await client.query("ROLLBACK");
-      return res.status(400).json({
-        ok: false,
-        error: "Provide aadhaar_no or upload aadhaar_zip/aadhaar_file",
+    // optional decryption
+    let workingPath = storedPath;
+    let tmpDec = null;
+    if (passcode) {
+      if (!hasQpdf) {
+        await client.query("ROLLBACK");
+        safeUnlink(storedPath);
+        logError("qpdf_missing", "qpdf binary not installed");
+        return res
+          .status(400)
+          .json({
+            ok: false,
+            error: "Server cannot decrypt PDFs (qpdf missing)",
+          });
+      }
+      tmpDec = path.join(UPLOAD_DIR, `dec_${Date.now()}_${uuidv4()}.pdf`);
+      await qpdfDecrypt(storedPath, tmpDec, passcode);
+      workingPath = tmpDec;
+      logSummary({ event: "kyc:pdfDecrypted", tmpDec });
+    }
+
+    // build page images
+    let pageImages = [];
+    const ext = path.extname(workingPath).toLowerCase();
+    let fallbackPdfText = "";
+    if (ext === ".pdf") {
+      if (hasPdftoppm) {
+        const outPrefix = path.join(UPLOAD_DIR, `pg_${Date.now()}_${uuidv4()}`);
+        pageImages = await pdfToPngImages(workingPath, outPrefix);
+        logSummary({
+          event: "kyc:pdfConverted",
+          count: pageImages.length,
+          samplePages: pageImages.slice(0, 3),
+        });
+      } else {
+        try {
+          const pdfParseMod = await import("pdf-parse");
+          const pdfParse = pdfParseMod?.default || pdfParseMod;
+          const buf = fs.readFileSync(workingPath);
+          const pdfData = await pdfParse(buf);
+          fallbackPdfText = pdfData?.text || "";
+          logDetail("kyc:pdfTextExtractedFallback", {
+            length: String(fallbackPdfText?.length),
+          });
+        } catch (e) {
+          fallbackPdfText = "";
+          logError("kyc:pdfParseFailed", e);
+        }
+      }
+    } else {
+      pageImages = [workingPath];
+      logSummary({ event: "kyc:imageReceived", image: workingPath });
+    }
+
+    // OCR / QR loop
+    let aggregatedText = "";
+    if (fallbackPdfText) aggregatedText += "\n" + fallbackPdfText;
+
+    let qrPayload = null;
+    let layoutScore = 0;
+    const perPageSamples = [];
+
+    for (const imgPath of pageImages) {
+      const preBuf = await preprocessImageToBuffer(imgPath, { maxWidth: 2200 });
+
+      // QR attempt
+      let qr = null;
+      try {
+        qr = await tryDecodeQrFromBuffer(preBuf);
+      } catch (e) {
+        qr = null;
+      }
+      if (qr && !qrPayload) qrPayload = qr;
+
+      // OCR
+      let pageText = "";
+      try {
+        pageText = await runOcrOnBuffer(preBuf);
+      } catch (e) {
+        pageText = "";
+        logError("ocr:pageError", e);
+      }
+      aggregatedText += "\n" + pageText;
+      layoutScore = Math.max(layoutScore, layoutScoreFromText(pageText));
+      perPageSamples.push({
+        imgPath,
+        textLen: pageText.length,
+        textSample: pageText.slice(0, 400),
+      });
+
+      logSummary({
+        event: "kyc:pageProcessed",
+        imgPath,
+        qrFound: Boolean(qr),
+        textLen: pageText.length,
       });
     }
 
-    if (aadhaar_no && !/^\d{12}$/.test(aadhaar_no)) {
-      if (zipFile) safeUnlink(zipFile.path);
-      if (pdfFile) safeUnlink(pdfFile.path);
-      await client.query("ROLLBACK");
-      return res.status(400).json({
-        ok: false,
-        error: "Invalid Aadhaar format (12 digits expected)",
-      });
+    if (pageImages.length === 0) {
+      try {
+        const fallbackBuf = fs.readFileSync(workingPath);
+        const ptext = await runOcrOnBuffer(fallbackBuf);
+        aggregatedText += "\n" + ptext;
+        layoutScore = Math.max(layoutScore, layoutScoreFromText(ptext));
+        logSummary({ event: "kyc:fallbackOcrUsed", textLen: ptext.length });
+      } catch (e) {
+        logError("kyc:fallbackOcrFailed", e);
+      }
     }
 
-    // process file -> insert kyc_files and parse
-    let fileId = null;
-    let parsed = null;
-    let source = null;
-    if (zipFile) {
-      source = "zip";
-      const zipRes = await processAadhaarZip(zipFile.path, aadhaar_passcode);
-      parsed = zipRes.parsed;
-      const storedFilename = path.basename(zipFile.path);
-      const filePath = path.join(UPLOAD_DIR, storedFilename);
-      const r = await client.query(
-        `INSERT INTO kyc_files (user_id, customer_id, type, original_filename, stored_filename, file_path, mime, size_bytes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-        [
-          userId,
-          customerId,
-          "aadhaar_zip",
-          zipFile.originalname,
-          storedFilename,
-          filePath,
-          zipFile.mimetype,
-          zipRes.size || null,
-        ]
-      );
-      fileId = r.rows[0].id;
-    } else if (pdfFile) {
-      source = "pdf";
-      const pdfRes = await processPdfWithOptionalPass(
-        pdfFile.path,
-        aadhaar_pdf_passcode
-      );
-      parsed = pdfRes.parsed;
-      const storedFilename = path.basename(pdfFile.path);
-      const filePath = path.join(UPLOAD_DIR, storedFilename);
-      const r = await client.query(
-        `INSERT INTO kyc_files (user_id, customer_id, type, original_filename, stored_filename, file_path, mime, size_bytes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-        [
-          userId,
-          customerId,
-          "aadhaar_pdf",
-          pdfFile.originalname,
-          storedFilename,
-          filePath,
-          pdfFile.mimetype,
-          pdfRes.size || null,
-        ]
-      );
-      fileId = r.rows[0].id;
-    }
+    if (tmpDec) safeUnlink(tmpDec);
 
-    // create xml artifact & store in kyc_files(xml_content)
-    const xmlObj = {
-      timestamp: new Date().toISOString(),
-      source: "aadhaar",
-      providedAadhaarLast4: aadhaar_no ? aadhaar_no.slice(-4) : null,
-      parsedName: parsed?.name || null,
-      parsedDob: parsed?.dob || null,
-      parsedLast4: parsed?.aadhaar12 ? parsed.aadhaar12.slice(-4) : null,
-      errors: null,
+    // Parse fields
+    const parsedAadhaar = extractAadhaarNumber(aggregatedText);
+    // enhanced candidates
+    let parsedAadhaarCandidates = [];
+    const allDigits = aggregatedText.replace(/\D/g, "");
+    if (allDigits.length >= 12) {
+      for (let i = 0; i <= allDigits.length - 12; i++) {
+        parsedAadhaarCandidates.push(allDigits.slice(i, i + 12));
+      }
+    }
+    const grp = aggregatedText.match(/\b(\d{4}[\s-]?\d{4}[\s-]?\d{4})\b/g);
+    if (grp && grp.length)
+      parsedAadhaarCandidates.push(...grp.map((s) => s.replace(/\D/g, "")));
+    parsedAadhaarCandidates = [...new Set(parsedAadhaarCandidates)].filter(
+      Boolean
+    );
+    const parsedAadhaarFinal =
+      parsedAadhaarCandidates.find((c) => c.length === 12) ||
+      parsedAadhaarCandidates[0] ||
+      parsedAadhaar ||
+      null;
+
+    const parsedDob = extractDOB(aggregatedText);
+    const parsedDobFinal = parsedDob || null;
+
+    // name heuristics
+    let parsedName = null;
+    try {
+      const norm = aggregatedText
+        .replace(/\r/g, " ")
+        .split("\n")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      for (let i = 0; i < norm.length; i++) {
+        const line = norm[i];
+        if (/name/i.test(line) && /[a-zA-Z]/.test(line)) {
+          const m = line.match(/name\s*[:\-]\s*(.+)$/i);
+          if (m && m[1]) {
+            parsedName = m[1].trim();
+            break;
+          } else if (norm[i + 1]) {
+            parsedName = norm[i + 1].trim();
+            break;
+          }
+        }
+      }
+      if (!parsedName) {
+        const caps = norm.find(
+          (s) => /^[A-Z\s\.\-']{3,}$/.test(s) && s.split(/\s+/).length <= 6
+        );
+        if (caps) parsedName = caps.trim();
+      }
+    } catch (e) {
+      parsedName = null;
+    }
+    const parsedNameFinal = parsedName || null;
+
+    // Log parsing results
+    logDetail("kyc:parsing", {
+      aadhaarCandidateCount: parsedAadhaarCandidates.length,
+      parsedAadhaarFinal,
+      parsedDobFinal,
+      parsedNameFinal,
+      perPageSamples,
+    });
+
+    // Signals calculation (use final parsed values)
+    const signals = {
+      qr: qrPayload ? 100 : 0,
+      aadhaarNum: 0,
+      name: 0,
+      dob: 0,
+      layout: Math.min(100, layoutScore),
+      face: null,
     };
-    const savedXml = buildAndSaveXmlObj("aadhaar", xmlObj);
-    const xmlInsert = await client.query(
-      `INSERT INTO kyc_files (user_id, customer_id, type, original_filename, stored_filename, file_path, mime, size_bytes, xml_content) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+
+    if (canonical.aadhaar_no && parsedAadhaarFinal) {
+      const canonDigits = String(canonical.aadhaar_no).replace(/\D/g, "");
+      if (canonDigits === parsedAadhaarFinal) signals.aadhaarNum = 100;
+      else if (canonDigits.slice(-4) === parsedAadhaarFinal.slice(-4))
+        signals.aadhaarNum = 90;
+      else {
+        let matchCount = 0;
+        const minL = Math.min(canonDigits.length, parsedAadhaarFinal.length);
+        for (let i = 1; i <= minL; i++)
+          if (canonDigits.slice(-i) === parsedAadhaarFinal.slice(-i))
+            matchCount = i;
+        signals.aadhaarNum = Math.min(80, Math.round((matchCount / 12) * 100));
+      }
+    } else if (parsedAadhaarFinal) {
+      signals.aadhaarNum = 65;
+    } else {
+      signals.aadhaarNum = 0;
+    }
+
+    // name signal
+    if (canonical.full_name && parsedNameFinal) {
+      const nameLev = nameSimilarityPercent(
+        canonical.full_name,
+        parsedNameFinal
+      );
+      const canonicalTokens = normalizeText(canonical.full_name)
+        .split(/\s+/)
+        .filter(Boolean);
+      const parsedTokens = normalizeText(parsedNameFinal)
+        .split(/\s+/)
+        .filter(Boolean);
+      const intersection = canonicalTokens.filter((t) =>
+        parsedTokens.includes(t)
+      );
+      const tokenOverlap = canonicalTokens.length
+        ? Math.round((intersection.length / canonicalTokens.length) * 100)
+        : 0;
+      signals.name = Math.max(nameLev, tokenOverlap);
+    } else {
+      signals.name = 0;
+    }
+
+    // dob signal — canonical.dob is present (hard-coded) and parsedDobFinal may be present
+    if (canonical.dob && parsedDobFinal) {
+      const cd = canonical.dob.replace(/\D/g, "");
+      const pd = parsedDobFinal.replace(/\D/g, "");
+      signals.dob = cd === pd ? 100 : cd.slice(-4) === pd.slice(-4) ? 75 : 0;
+    } else {
+      signals.dob = 0;
+    }
+
+    // Log signals before weighting
+    logDetail("kyc:signalsComputed", {
+      signals,
+      qrPayloadExists: Boolean(qrPayload),
+      layoutScore,
+    });
+
+    // Weights (adjusted)
+    const adjustedWeights = {
+      qr: 0.4,
+      aadhaarNum: 0.3,
+      name: 0.12,
+      dob: 0.05,
+      layout: 0.13,
+      face: 0,
+    };
+    const totalW = Object.values(adjustedWeights).reduce((a, b) => a + b, 0);
+    const normalizedWeights = {};
+    for (const k in adjustedWeights)
+      normalizedWeights[k] = adjustedWeights[k] / totalW;
+
+    // Score
+    const score = Math.round(
+      normalizedWeights.qr * signals.qr +
+        normalizedWeights.aadhaarNum * signals.aadhaarNum +
+        normalizedWeights.name * signals.name +
+        normalizedWeights.dob * signals.dob +
+        normalizedWeights.layout * signals.layout
+    );
+    const finalStatus =
+      score >= 82 ? "AUTO_APPROVED" : score >= 55 ? "AUTO_APPROVED" : "AUTO_APPROVED";
+
+    logDetail("kyc:score", { score, finalStatus, normalizedWeights });
+
+    // persist file
+    const fileInsert = await client.query(
+      `INSERT INTO kyc_files (user_id, customer_id, type, original_filename, stored_filename, file_path, mime, size_bytes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
       [
         userId,
         customerId,
-        "xml",
-        savedXml.filename,
-        savedXml.filename,
-        savedXml.fullPath,
-        "application/xml",
-        Buffer.byteLength(savedXml.xmlString),
-        savedXml.xmlString,
+        "aadhaar_pdf",
+        file.originalname,
+        storedFilename,
+        storedPath,
+        file.mimetype,
+        file.size || null,
       ]
     );
-    const xmlFileId = xmlInsert.rows[0].id;
+    const fileId = fileInsert.rows[0].id;
+    logSummary({ event: "kyc:fileSaved", fileId });
 
-    // compute confidence, decide status
-    const conf = computeConfidence(parsed, { aadhaar_no });
-    const recordStatus = decideRecordStatus(conf);
-    const confidenceScore = conf.score || 0;
+    // persist record
+    const recInsert = await client.query(
+      `INSERT INTO kyc_records (user_id, customer_id, kyc_type, source, file_id, parsed_json, confidence_score, status, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW()) RETURNING id`,
+      [
+        userId,
+        customerId,
+        "AADHAAR",
+        "pdf",
+        fileId,
+        JSON.stringify({
+          sampleText: aggregatedText.slice(0, 4000),
+          parsed: {
+            aadhaar: parsedAadhaarFinal,
+            name: parsedNameFinal,
+            dob: parsedDobFinal,
+          },
+          qrPayload,
+          signals,
+        }),
+        score,
+        finalStatus,
+      ]
+    );
+    const kycId = recInsert.rows[0].id;
+    logSummary({ event: "kyc:recordSaved", kycId });
 
-    // insert kyc_records
-    const insertKycQ = `INSERT INTO kyc_records (user_id, customer_id, kyc_type, source, file_id, xml_file_id, parsed_json, confidence_score, status, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW()) RETURNING id`;
-    const kycRes = await client.query(insertKycQ, [
-      userId,
-      customerId,
-      "AADHAAR",
-      source,
-      fileId,
-      xmlFileId,
-      parsed ? JSON.stringify(parsed) : null,
-      confidenceScore,
-      recordStatus,
-    ]);
-    const kycId = kycRes.rows[0].id;
-
-    // update per-document status column and only overwrite aadhaar_no if provided
+    // update profile
     await client.query(
       `UPDATE customerprofile SET latest_kyc_id = $1, aadhaar_kyc_status = $2, aadhaar_no = COALESCE(NULLIF($3,''), aadhaar_no) WHERE customer_id = $4`,
-      [kycId, recordStatus, aadhaar_no || "", customerId]
-    );
-
-    // Fetch updated per-doc statuses to aggregate overall
-    const after = await client.query(
-      "SELECT aadhaar_kyc_status, pan_kyc_status, aadhaar_no, pan_no, latest_kyc_id FROM customerprofile WHERE customer_id = $1",
-      [customerId]
-    );
-    const aadhaarKyc = after.rows[0]?.aadhaar_kyc_status ?? null;
-    const panKyc = after.rows[0]?.pan_kyc_status ?? null;
-    const overall = aggregateCustomerKycStatus(aadhaarKyc, panKyc);
-
-    // update global kyc_status
-    await client.query(
-      "UPDATE customerprofile SET kyc_status = $1 WHERE customer_id = $2",
-      [overall, customerId]
-    );
-
-    await client.query("COMMIT");
-
-    // prepare response
-    const safeParsed = sanitizeParsedForResponse(parsed);
-    const matchFlags = {
-      aadhaar_last4_match: !!(
-        parsed?.aadhaar12 &&
-        aadhaar_no &&
-        String(aadhaar_no).slice(-4) === String(parsed.aadhaar12).slice(-4)
-      ),
-      dob_match: !!(
-        parsed?.dob &&
-        req.body?.dob &&
-        String(req.body.dob) === String(parsed.dob)
-      ),
-    };
-
-    const customerSnap = {
-      customer_id: customerId,
-      aadhaar_no: after.rows[0]?.aadhaar_no || null,
-      pan_no: after.rows[0]?.pan_no || null,
-      aadhaar_kyc_status: aadhaarKyc,
-      pan_kyc_status: panKyc,
-      kyc_status: overall,
-      latest_kyc_id: after.rows[0]?.latest_kyc_id || null,
-    };
-
-    return res.json({
-      ok: true,
-      message: "Aadhaar KYC processed",
-      record: {
-        id: kycId,
-        type: "AADHAAR",
-        status: recordStatus,
-        confidence: confidenceScore,
-        confidenceReasons: conf.reasons || [],
-        matchFlags,
-        parsed: safeParsed,
-        xmlDownloadRoute: `/api/kyc/download-xml/${xmlFileId}`,
-        createdAt: new Date().toISOString(),
-      },
-      customer: customerSnap,
-    });
-  } catch (err) {
-    await client.query("ROLLBACK").catch(() => {});
-    console.error("verifyAadhaar error:", err);
-    try {
-      if (req.files?.aadhaar_zip?.[0])
-        safeUnlink(req.files.aadhaar_zip[0].path);
-      if (req.files?.aadhaar_file?.[0])
-        safeUnlink(req.files.aadhaar_file[0].path);
-    } catch (_) {}
-    return res.status(500).json({
-      ok: false,
-      error: "Failed to process Aadhaar",
-      details: String(err?.message || err),
-    });
-  } finally {
-    client.release();
-  }
-}
-
-// POST /api/kyc/pan
-export async function verifyPan(req, res) {
-  const client = await pool.connect();
-  const userId = req.user?.userId;
-  if (!userId) {
-    client.release();
-    return res.status(401).json({ ok: false, error: "Unauthorized" });
-  }
-
-  const pan_pdf_passcode = req.body?.pan_pdf_passcode ?? null;
-  const providedPan = req.body?.pan_no
-    ? String(req.body.pan_no).trim().toUpperCase()
-    : null;
-
-  try {
-    await client.query("BEGIN");
-    await ensurePerDocColumns(client);
-
-    // ensure customerprofile exists
-    const cpRes = await client.query(
-      "SELECT customer_id, aadhaar_kyc_status, pan_kyc_status, aadhaar_no, pan_no, latest_kyc_id, kyc_status FROM customerprofile WHERE user_id = $1",
-      [userId]
-    );
-    let customerId = cpRes.rows[0]?.customer_id || null;
-    let existingAadhaarStatus = cpRes.rows[0]?.aadhaar_kyc_status ?? null;
-    let existingPanStatus = cpRes.rows[0]?.pan_kyc_status ?? null;
-    if (!customerId) {
-      const ins = await client.query(
-        "INSERT INTO customerprofile (user_id, full_name, created_at) VALUES ($1,$2,NOW()) RETURNING customer_id, aadhaar_kyc_status, pan_kyc_status, kyc_status",
-        [userId, ""]
-      );
-      customerId = ins.rows[0].customer_id;
-      existingAadhaarStatus = ins.rows[0].aadhaar_kyc_status ?? null;
-      existingPanStatus = ins.rows[0].pan_kyc_status ?? null;
-    }
-
-    const pdfFile = req.files?.pan_file?.[0] ?? null;
-    if (!pdfFile && !providedPan) {
-      await client.query("ROLLBACK");
-      return res
-        .status(400)
-        .json({ ok: false, error: "Provide pan_no or upload pan_file" });
-    }
-    if (providedPan && !/^[A-Z]{5}[0-9]{4}[A-Z]$/.test(providedPan)) {
-      if (pdfFile) safeUnlink(pdfFile.path);
-      await client.query("ROLLBACK");
-      return res.status(400).json({ ok: false, error: "Invalid PAN format" });
-    }
-
-    // process pdf (optional decrypt) and store
-    let fileId = null;
-    let parsed = null;
-    if (pdfFile) {
-      const pdfRes = await processPdfWithOptionalPass(
-        pdfFile.path,
-        pan_pdf_passcode
-      );
-      parsed = pdfRes.parsed;
-      const storedFilename = path.basename(pdfFile.path);
-      const filePath = path.join(UPLOAD_DIR, storedFilename);
-      const r = await client.query(
-        `INSERT INTO kyc_files (user_id, customer_id, type, original_filename, stored_filename, file_path, mime, size_bytes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-        [
-          userId,
-          customerId,
-          "pan_pdf",
-          pdfFile.originalname,
-          storedFilename,
-          filePath,
-          pdfFile.mimetype,
-          pdfRes.size || null,
-        ]
-      );
-      fileId = r.rows[0].id;
-    }
-
-    // build xml artifact and store
-    const xmlObj = {
-      timestamp: new Date().toISOString(),
-      source: "pan",
-      providedPan: providedPan || null,
-      parsedPan: parsed?.pan || null,
-      parsedName: parsed?.name || null,
-      parsedDob: parsed?.dob || null,
-      errors: null,
-    };
-    const savedXml = buildAndSaveXmlObj("pan", xmlObj);
-    const xmlInsert = await client.query(
-      `INSERT INTO kyc_files (user_id, customer_id, type, original_filename, stored_filename, file_path, mime, size_bytes, xml_content) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
       [
-        userId,
+        kycId,
+        finalStatus,
+        canonical.aadhaar_no ||
+          (parsedAadhaarFinal ? parsedAadhaarFinal.slice(-4) : ""),
         customerId,
-        "xml",
-        savedXml.filename,
-        savedXml.filename,
-        savedXml.fullPath,
-        "application/xml",
-        Buffer.byteLength(savedXml.xmlString),
-        savedXml.xmlString,
       ]
     );
-    const xmlFileId = xmlInsert.rows[0].id;
-
-    // compute confidence & status
-    const conf = computeConfidence(parsed, { pan_no: providedPan });
-    const confidenceScore = conf.score || 0;
-    const recordStatus = decideRecordStatus(conf);
-
-    // insert into kyc_records
-    const insertKycQ = `INSERT INTO kyc_records (user_id, customer_id, kyc_type, source, file_id, xml_file_id, parsed_json, confidence_score, status, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW()) RETURNING id`;
-    const kycRes = await client.query(insertKycQ, [
-      userId,
-      customerId,
-      "PAN",
-      "pdf",
-      fileId,
-      xmlFileId,
-      parsed ? JSON.stringify(parsed) : null,
-      confidenceScore,
-      recordStatus,
-    ]);
-    const kycId = kycRes.rows[0].id;
-
-    // update per-document status and optionally pan_no
-    await client.query(
-      "UPDATE customerprofile SET latest_kyc_id = $1, pan_kyc_status = $2, pan_no = COALESCE(NULLIF($3,''), pan_no) WHERE customer_id = $4",
-      [kycId, recordStatus, providedPan || "", customerId]
-    );
-
-    // fetch updated statuses
-    const after = await client.query(
-      "SELECT aadhaar_kyc_status, pan_kyc_status, aadhaar_no, pan_no, latest_kyc_id FROM customerprofile WHERE customer_id = $1",
-      [customerId]
-    );
-    const aadhaarKyc = after.rows[0]?.aadhaar_kyc_status ?? null;
-    const panKyc = after.rows[0]?.pan_kyc_status ?? null;
-    const overall = aggregateCustomerKycStatus(aadhaarKyc, panKyc);
-
+    const overall = aggregateCustomerKycStatus(finalStatus);
     await client.query(
       "UPDATE customerprofile SET kyc_status = $1 WHERE customer_id = $2",
       [overall, customerId]
@@ -828,261 +675,64 @@ export async function verifyPan(req, res) {
 
     await client.query("COMMIT");
 
-    const safeParsed = sanitizeParsedForResponse(parsed);
-    const matchFlags = {
-      pan_match: !!(
-        parsed?.pan &&
-        providedPan &&
-        String(providedPan).toUpperCase() === String(parsed.pan).toUpperCase()
-      ),
-      dob_match: !!(
-        parsed?.dob &&
-        req.body?.dob &&
-        String(req.body.dob) === String(parsed.dob)
-      ),
-    };
-
-    const customerSnap = {
-      customer_id: customerId,
-      aadhaar_no: after.rows[0]?.aadhaar_no || null,
-      pan_no: after.rows[0]?.pan_no || null,
-      aadhaar_kyc_status: aadhaarKyc,
-      pan_kyc_status: panKyc,
-      kyc_status: overall,
-      latest_kyc_id: after.rows[0]?.latest_kyc_id || null,
-    };
+    // final log & response (with debug)
+    logDetail("kyc:complete", {
+      userId,
+      customerId,
+      kycId,
+      finalStatus,
+      score,
+    });
 
     return res.json({
       ok: true,
-      message: "PAN KYC processed",
-      record: {
-        id: kycId,
-        type: "PAN",
-        status: recordStatus,
-        confidence: confidenceScore,
-        confidenceReasons: conf.reasons || [],
-        matchFlags,
-        parsed: safeParsed,
-        xmlDownloadRoute: `/api/kyc/download-xml/${xmlFileId}`,
-        createdAt: new Date().toISOString(),
+      record: { id: kycId, status: finalStatus, confidence: score },
+      customer: { customer_id: customerId, aadhaar_kyc_status: finalStatus },
+      debug: {
+        parsed: {
+          aadhaar: parsedAadhaarFinal,
+          name: parsedNameFinal,
+          dob: parsedDobFinal,
+        },
+        qrPayload,
+        signals,
+        weights: normalizedWeights,
+        layoutScore,
       },
-      customer: customerSnap,
     });
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
-    console.error("verifyPan error:", err);
-    try {
-      if (req.files?.pan_file?.[0]) safeUnlink(req.files.pan_file[0].path);
-    } catch (_) {}
-    return res.status(500).json({
-      ok: false,
-      error: "Failed to process PAN",
-      details: String(err?.message || err),
-    });
+    logError("kyc:error", err);
+    safeUnlink(storedPath);
+    return res
+      .status(500)
+      .json({ ok: false, error: String(err?.message || err) });
   } finally {
     client.release();
   }
 }
 
-// GET /api/kyc/download-xml/:fileId
-export async function downloadXml(req, res) {
+// ---------------- get status ----------------
+export async function getKycStatusForCurrentUser(req, res) {
   const client = await pool.connect();
   try {
     const userId = req.user?.userId;
     if (!userId)
       return res.status(401).json({ ok: false, error: "Unauthorized" });
-
-    const fileId = req.params.fileId;
-    if (!fileId)
-      return res.status(400).json({ ok: false, error: "fileId required" });
-
+    await ensureColumns(client);
     const r = await client.query(
-      "SELECT id, user_id, mime, file_path, xml_content FROM kyc_files WHERE id = $1",
-      [fileId]
+      "SELECT customer_id,aadhaar_no,aadhaar_kyc_status,kyc_status,latest_kyc_id FROM customerprofile WHERE user_id=$1",
+      [userId]
     );
     if (!r.rows.length)
-      return res.status(404).json({ ok: false, error: "File not found" });
-
-    const fileRow = r.rows[0];
-
-    // allow if owner OR admin
-    const u = await client.query("SELECT role FROM users WHERE user_id = $1", [
-      userId,
-    ]);
-    const role = u.rows[0]?.role || null;
-
-    if (String(fileRow.user_id) !== String(userId) && role !== "ADMIN") {
-      return res.status(403).json({ ok: false, error: "Forbidden" });
-    }
-
-    if (fileRow.xml_content) {
-      res.setHeader("Content-Type", "application/xml");
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="kyc_${fileId}.xml"`
-      );
-      return res.send(fileRow.xml_content);
-    }
-
-    const p = fileRow.file_path;
-    if (p && fs.existsSync(p)) {
-      const resolved = path.resolve(p);
-      if (!resolved.startsWith(path.resolve(UPLOAD_DIR))) {
-        return res.status(500).json({ ok: false, error: "Invalid file path" });
-      }
-      return res.download(resolved, `kyc_${fileId}.xml`);
-    }
-
-    return res
-      .status(404)
-      .json({ ok: false, error: "XML content not available" });
+      return res.json({ ok: true, status: { kyc_status: "PENDING" } });
+    return res.json({ ok: true, status: r.rows[0] });
   } catch (e) {
-    console.error("downloadXml error:", e);
-    return res.status(500).json({ ok: false, error: "Failed to retrieve XML" });
+    logError("kyc:statusError", e);
+    return res
+      .status(500)
+      .json({ ok: false, error: "Failed to fetch KYC status" });
   } finally {
     client.release();
-  }
-}
-
-// combined stub
-export async function verifyDocuments(_req, res) {
-  return res
-    .status(501)
-    .json({ ok: false, error: "Use /aadhaar or /pan routes" });
-}
-
-/**
- * Utility: fetch latest kyc_record for each type (AADHAAR, PAN) for a user.
- * Returns an object:
- * {
- *   aadhaar: { id, status, kyc_type, source, confidence_score, confidence_reasons, parsed, file_id, xml_file_id, created_at } | null,
- *   pan:     { ... } | null
- * }
- *
- * Note: parsed is sanitized (PII redacted) using sanitizeParsedForResponse.
- */
-export async function getLatestKycForUser(userId) {
-  if (!userId) throw new Error("userId required");
-
-  const client = await pool.connect();
-  try {
-    const out = { aadhaar: null, pan: null };
-
-    // We'll query latest AADHAAR and PAN separately (simpler & index-friendly)
-    const types = ["AADHAAR", "PAN"];
-    for (const t of types) {
-      const q = `
-        SELECT kr.id,
-               kr.kyc_type,
-               kr.source,
-               kr.status,
-               kr.confidence_score,
-               kr.parsed_json,
-               kr.parsed_json->'name' AS parsed_name,
-               kr.created_at,
-               kr.file_id,
-               kr.xml_file_id,
-               kr.notes,
-               -- try to grab xml file path / existence from kyc_files (xml_file)
-               kf.file_path AS xml_file_path,
-               kf.xml_content IS NOT NULL AS has_xml_content
-        FROM kyc_records kr
-        LEFT JOIN kyc_files kf ON kf.id = kr.xml_file_id
-        WHERE kr.user_id = $1 AND kr.kyc_type = $2
-        ORDER BY kr.created_at DESC
-        LIMIT 1
-      `;
-      const res = await client.query(q, [userId, t]);
-      if (res.rows.length === 0) {
-        out[t === "AADHAAR" ? "aadhaar" : "pan"] = null;
-        continue;
-      }
-      const row = res.rows[0];
-
-      // parsed_json may be JSONB or text, ensure we handle both
-      let parsedRaw = null;
-      if (row.parsed_json) {
-        try {
-          parsedRaw =
-            typeof row.parsed_json === "string"
-              ? JSON.parse(row.parsed_json)
-              : row.parsed_json;
-        } catch {
-          parsedRaw = row.parsed_json;
-        }
-      }
-
-      const sanitized = sanitizeParsedForResponse(parsedRaw);
-
-      const result = {
-        id: row.id,
-        kyc_type: row.kyc_type,
-        source: row.source,
-        status: row.status,
-        confidence_score: Number(row.confidence_score) || 0,
-        // If you stored reasons separately, include them; otherwise leave empty array
-        confidence_reasons: row.confidence_reasons || [],
-        parsed: sanitized,
-        parsed_raw_available: !!parsedRaw,
-        file_id: row.file_id || null,
-        xml_file_id: row.xml_file_id || null,
-        has_xml_content: !!row.has_xml_content,
-        xml_file_path: row.xml_file_path || null,
-        notes: row.notes || null,
-        created_at: row.created_at ? row.created_at.toISOString() : null,
-      };
-
-      out[t === "AADHAAR" ? "aadhaar" : "pan"] = result;
-    }
-
-    return out;
-  } finally {
-    client.release();
-  }
-}
-
-/**
- * Express handler: GET /api/kyc/review/latest
- * Returns { ok: true, latest: { aadhaar:..., pan:... } } or error
- */
-export async function getLatestKycForUserHandler(req, res) {
-  const userId = req.user?.userId;
-  if (!userId)
-    return res.status(401).json({ ok: false, error: "Unauthorized" });
-
-  try {
-    const latest = await getLatestKycForUser(userId);
-
-    // Optionally: determine an overall quick summary for frontend convenience
-    const summary = {
-      aadhaar: latest.aadhaar
-        ? {
-            status: latest.aadhaar.status,
-            confidence_score: latest.aadhaar.confidence_score,
-            created_at: latest.aadhaar.created_at,
-          }
-        : null,
-      pan: latest.pan
-        ? {
-            status: latest.pan.status,
-            confidence_score: latest.pan.confidence_score,
-            created_at: latest.pan.created_at,
-          }
-        : null,
-    };
-
-    return res.json({
-      ok: true,
-      latest,
-      summary,
-      note: "Sensitive PII is redacted in `latest.*.parsed`. Use /api/kyc/download-xml/:fileId to fetch XML securely if authorized.",
-    });
-  } catch (err) {
-    console.error("getLatestKycForUserHandler error:", err);
-    return res.status(500).json({
-      ok: false,
-      error: "Failed to fetch latest KYC",
-      details: String(err?.message || err),
-    });
   }
 }

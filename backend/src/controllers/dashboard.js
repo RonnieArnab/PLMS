@@ -20,7 +20,7 @@ async function calculateCreditScore(userId) {
     let score = 300; // Base score
 
     // 1. KYC Status (0-100 points)
-    const kycQuery = `
+    /*const kycQuery = `
       SELECT cp.kyc_status, cp.aadhaar_kyc_status, cp.pan_kyc_status,
              cp.annual_income, cp.years_experience, cp.profession
       FROM customerprofile cp
@@ -51,7 +51,7 @@ async function calculateCreditScore(userId) {
       if (experience >= 10) score += 30;
       else if (experience >= 5) score += 20;
       else if (experience >= 2) score += 10;
-    }
+    }*/
 
     // 2. Loan History (0-200 points)
     const loanQuery = `

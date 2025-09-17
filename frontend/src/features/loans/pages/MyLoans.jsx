@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { DollarSign, Calendar, CreditCard, FileText } from "lucide-react";
+import {Download, DollarSign, Calendar, CreditCard, FileText } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@components/layout/DashboardLayout";
 import MotionFadeIn from "@components/ui/MotionFadeIn.jsx";
@@ -22,6 +22,7 @@ export function MyLoans() {
   const [loansData, setLoansData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+   const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -41,6 +42,7 @@ export function MyLoans() {
         setLoading(false);
       });
   }, [user?.id]);
+   
 
   const { activeLoans, completedLoans } = useMemo(() => {
     const ui = loansData.map(toUiLoan);
@@ -66,13 +68,11 @@ export function MyLoans() {
     (sum, l) => sum + (l.monthlyPayment || 0),
     0
   );
-
-
-  // Calculate total repaid across all loans
-  const totalRepaid = [...activeLoans, ...completedLoans].reduce(
-    (sum, l) => sum + (l.totalRepaid || 0),
-    0
-  );
+  const nextDate =
+    activeLoans
+      .map((l) => (l.nextPaymentDate ? new Date(l.nextPaymentDate) : null))
+      .filter(Boolean)
+      .sort((a, b) => a - b)[0] || null;
 
 const [selectedLoan, setSelectedLoan] = useState(null);
 
@@ -142,8 +142,8 @@ const handleDownload = (loan) => {
     loan.productName || "N/A",
     `₹${loan.amount || "0.00"}`,
     loan.approvedAmount ? `₹${loan.approvedAmount}` : "N/A",
-    loan.appliedDate ? formatDateTime(loan.appliedDate) : "N/A", // Approved Date = Applied Date
-    loan.appliedDate ? formatDateTime(loan.appliedDate) : "N/A", // Disbursement Date = Applied Date
+    loan.approvedDate ? formatDateTime(loan.approvedDate) : "N/A",
+    loan.appliedDate ? formatDateTime(loan.appliedDate) : "N/A",
     loan.tenureMonths ? `${loan.tenureMonths} months` : "N/A",
     loan.interestRate ? `${loan.interestRate}%` : "N/A",
     loan.monthlyPayment ? `₹${loan.monthlyPayment}` : "N/A",
@@ -197,6 +197,91 @@ const handleDownload = (loan) => {
 };
 
 
+ const convertToCSV = (loansData) => {
+    if (!loansData || loansData.length === 0) return '';
+
+    // Define CSV headers based on loan application data structure
+    const headers = [
+      'Loan ID',
+      'Product Name',
+      'Target Profession',
+      'Loan Amount',
+      'Tenure (Months)',
+      'Application Status',
+      'Approved Amount',
+      'Interest Rate (%)',
+      'Processing Fee',
+      'Risk Grade',
+      'Applied Date',
+      'Approved Date',
+      'Disbursement Date',
+      'Full Name',
+      'Email',
+      'Profession',
+      'Purpose'
+    ];
+
+    // Convert data to CSV rows
+    const rows = loansData.map(loan => [
+      loan.loan_id || '',
+      loan.product_name || '',
+      loan.target_profession || '',
+      loan.loan_amount || '',
+      loan.tenure_months || '',
+      loan.application_status || '',
+      loan.loan_amount || '',
+      loan.interest_rate_apr || '',
+      loan.processing_fee || '',
+      loan.risk_grade || '',
+      loan.applied_date ? new Date(loan.applied_date).toLocaleDateString() : '',
+      loan.applied_date ? new Date(loan.applied_date).toLocaleDateString() : '',
+      loan.disbursement_date ? new Date(loan.disbursement_date).toLocaleDateString() : '',
+      loan.full_name || '',
+      loan.email || '',
+      loan.profession || '',
+      loan.purpose || ''
+    ]);
+
+    // Combine headers and rows
+    const csvContent = [headers, ...rows]
+      .map(row => row.map(field => `"${field}"`).join(','))
+      .join('\n');
+
+    return csvContent;
+  };
+
+  // Export loans to CSV
+  const exportToCSV = () => {
+    if (!loansData || loansData.length === 0) {
+      alert('No loan data available to export');
+      return;
+    }
+
+    setExporting(true);
+
+    try {
+      const csvContent = convertToCSV(loansData);
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const link = document.createElement('a');
+
+      if (link.download !== undefined) {
+        const url = URL.createObjectURL(blob);
+        link.setAttribute('href', url);
+        link.setAttribute('download', `my_loans_${new Date().toISOString().split('T')[0]}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    } catch (error) {
+      console.error('Error exporting CSV:', error);
+      alert('Failed to export CSV file');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+
   const handlePay = (loan) => {
     console.log("Navigating to payments for loan:", loan.id);
     // Navigate to payments page with loan data
@@ -224,22 +309,19 @@ const handleDownload = (loan) => {
               </div>
 
               <div className="flex items-center gap-3 w-full md:w-auto">
-                <div className="hidden md:block">
-                  <input
-                    className="input input-sm input-bordered max-w-xs"
-                    placeholder="Search loans..."
-                  />
-                </div>
+                
                 <Button
-                  variant="gradient"
-                  size="md"
-                  style={{
-                    backgroundImage: "linear-gradient(90deg, #84cc16, #22c55e)",
-                    color: "white",
-                  }}
-                  disabled={loading}>
-                  <FileText className="w-4 h-4" /> Export
-                </Button>
+                onClick={exportToCSV}
+                disabled={exporting || loans.length === 0}
+                className="flex items-center gap-2"
+          >
+            {exporting ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : (
+              <Download size={16} />
+            )}
+            {exporting ? 'Exporting...' : 'Export CSV'}
+          </Button>
               </div>
             </div>
           </Paper>

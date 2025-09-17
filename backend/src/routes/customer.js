@@ -15,17 +15,11 @@ router.get("/ping", (req, res) =>
   res.json({ ok: true, route: "/api/customer/ping" })
 );
 
-router.post("/register", registerCustomer);
-
 router.get("/me", authenticate, getCustomerMe);
 
 router.patch("/me", authenticate, patchCustomerMe);
 
-router.post(
-  "/complete",
-  authenticate,
-  completeCustomerProfile
-);
+router.post("/complete", authenticate, completeCustomerProfile);
 
 router.post(
   "/kyc",

@@ -1,26 +1,24 @@
+// src/components/layout/DashboardLayout.jsx
 import React from "react";
-import { motion } from "framer-motion";
 
-const layoutVariants = {
-  hidden: { opacity: 0 },
-  visible: {
-    opacity: 1,
-    transition: {
-      duration: 0.3,
-      ease: "easeOut",
-    },
-  },
-};
-
-export const DashboardLayout = ({ children }) => {
+/**
+ * DashboardLayout (named export)
+ * - Simplified layout with no navbar/header components.
+ * - Removed KYC reminder logic per request; this file now only provides
+ *   a consistent container for dashboard pages.
+ *
+ * Usage:
+ *  import { DashboardLayout } from "@components/layout/DashboardLayout";
+ *  <DashboardLayout> ...page content... </DashboardLayout>
+ */
+export function DashboardLayout({ children }) {
   return (
-    <motion.div
-      variants={layoutVariants}
-      initial="hidden"
-      animate="visible"
-      className="min-h-screen bg-base-200"
-    >
-      <main className="max-w-7xl mx-auto">{children}</main>
-    </motion.div>
+    <div className="min-h-screen bg-slate-50">
+      <main className="max-w-7xl mx-auto px-4 py-6">
+        <section>{children}</section>
+      </main>
+    </div>
   );
-};
+}
+
+export default DashboardLayout;

@@ -1,10 +1,10 @@
-// AuthPage.jsx
+// src/pages/AuthPage.jsx (or src/features/auth/pages/AuthPage.jsx depending on your structure)
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import LoginForm from "@features/auth/components/LoginForm";
-import SignupForm from "@features/auth/components/SignupForm.jsx";
+import LoginForm from "@features/auth/components/LoginForm"; // keep this if you have it
+import SignupForm from "@features/auth/components/SignupForm.jsx"; // <--- corrected path
 import Lottie from "lottie-react";
-import heroAnimation from "@assets/hero-loan.json"; // keep your existing Lottie file
+import heroAnimation from "@assets/hero-loan.json";
 import MotionFadeIn from "@components/ui/MotionFadeIn.jsx";
 
 export const AuthPage = () => {
@@ -14,12 +14,10 @@ export const AuthPage = () => {
     <div className="min-h-screen grid grid-cols-1 lg:grid-cols-2">
       {/* Left: Brand hero */}
       <motion.div
-        className="hidden lg:flex relative flex-col justify-center items-center
-             px-12 overflow-hidden"
+        className="hidden lg:flex relative flex-col justify-center items-center px-12 overflow-hidden"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ duration: 0.6 }}>
-        {/* gradient background */}
         <div
           aria-hidden
           style={{

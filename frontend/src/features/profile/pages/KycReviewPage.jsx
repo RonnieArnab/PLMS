@@ -10,7 +10,7 @@ import { Badge } from "@components/ui/Badge.jsx";
 import { ArrowLeft, AlertCircle, CheckCircle, RefreshCw } from "lucide-react";
 import api from "@api/api";
 import useCustomer from "@features/profile/hooks/useCustomer";
-import useKYC from "@features/kyc/hooks/useKYC";
+import useKYC from "@features/profile/hooks/useKyc";
 
 /**
  * KycReviewPage

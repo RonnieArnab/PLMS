@@ -64,7 +64,7 @@ async function safeUnlinkIfInsideUploadDir(filename) {
 async function fetchCombinedUser(userId) {
   const q = `
     SELECT u.user_id, u.email, u.role, u.phone_number,
-           c.customer_id, c.full_name, c.aadhaar_no, c.pan_no, c.profession,
+           c.customer_id, u.full_name, c.aadhaar_no, c.pan_no, c.profession,
            c.years_experience, c.annual_income, c.kyc_status, c.address, c.account_id,
            c.nominee, c.nominee_contact, c.date_of_birth,
            c.created_at as customer_created_at, u.created_at as user_created_at,
@@ -87,7 +87,10 @@ async function fetchCombinedUser(userId) {
     const birthDate = new Date(row.date_of_birth);
     age = today.getFullYear() - birthDate.getFullYear();
     const monthDiff = today.getMonth() - birthDate.getMonth();
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+    if (
+      monthDiff < 0 ||
+      (monthDiff === 0 && today.getDate() < birthDate.getDate())
+    ) {
       age--;
     }
   }
@@ -293,7 +296,8 @@ export const completeCustomerProfile = async (req, res) => {
       if (aadhaar_no) push("aadhaar_no", aadhaar_no);
       if (pan_no) push("pan_no", pan_no);
       if (profession) push("profession", profession);
-      if (years_experience !== undefined) push("years_experience", years_experience);
+      if (years_experience !== undefined)
+        push("years_experience", years_experience);
       if (annual_income !== undefined) push("annual_income", annual_income);
       if (address) push("address", address);
       if (accountIdToUse) push("account_id", accountIdToUse);
@@ -320,7 +324,9 @@ export const completeCustomerProfile = async (req, res) => {
 
       await client.query("COMMIT");
       const user = await fetchCombinedUser(userId);
-      return res.status(200).json({ message: "Customer profile updated", user });
+      return res
+        .status(200)
+        .json({ message: "Customer profile updated", user });
     }
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
@@ -502,7 +508,8 @@ export const postCustomerKyc = async (req, res) => {
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
     panFileObj = (req.files?.pan_file && req.files.pan_file[0]) || null;
-    aadhaarFileObj = (req.files?.aadhaar_file && req.files.aadhaar_file[0]) || null;
+    aadhaarFileObj =
+      (req.files?.aadhaar_file && req.files.aadhaar_file[0]) || null;
 
     const { pan_no, aadhaar_no } = req.body || {};
 
@@ -512,7 +519,8 @@ export const postCustomerKyc = async (req, res) => {
 
     if (aadhaar_no && !/^\d{12}$/.test(String(aadhaar_no))) {
       if (panFileObj) await safeUnlinkIfInsideUploadDir(panFileObj.filename);
-      if (aadhaarFileObj) await safeUnlinkIfInsideUploadDir(aadhaarFileObj.filename);
+      if (aadhaarFileObj)
+        await safeUnlinkIfInsideUploadDir(aadhaarFileObj.filename);
       return res.status(400).json({
         error: "Invalid Aadhaar format",
         errors: { aadhaar_no: "invalid" },
@@ -521,7 +529,8 @@ export const postCustomerKyc = async (req, res) => {
 
     if (pan_no && !/^[A-Z]{5}[0-9]{4}[A-Z]$/i.test(String(pan_no))) {
       if (panFileObj) await safeUnlinkIfInsideUploadDir(panFileObj.filename);
-      if (aadhaarFileObj) await safeUnlinkIfInsideUploadDir(aadhaarFileObj.filename);
+      if (aadhaarFileObj)
+        await safeUnlinkIfInsideUploadDir(aadhaarFileObj.filename);
       return res.status(400).json({
         error: "Invalid PAN format",
         errors: { pan_no: "invalid" },
@@ -538,7 +547,8 @@ export const postCustomerKyc = async (req, res) => {
       if (r.rows.length) {
         await client.query("ROLLBACK");
         if (panFileObj) await safeUnlinkIfInsideUploadDir(panFileObj.filename);
-        if (aadhaarFileObj) await safeUnlinkIfInsideUploadDir(aadhaarFileObj.filename);
+        if (aadhaarFileObj)
+          await safeUnlinkIfInsideUploadDir(aadhaarFileObj.filename);
         return res.status(409).json({
           error: "PAN already used",
           errors: { pan_no: "already_in_use" },
@@ -554,7 +564,8 @@ export const postCustomerKyc = async (req, res) => {
       if (r.rows.length) {
         await client.query("ROLLBACK");
         if (panFileObj) await safeUnlinkIfInsideUploadDir(panFileObj.filename);
-        if (aadhaarFileObj) await safeUnlinkIfInsideUploadDir(aadhaarFileObj.filename);
+        if (aadhaarFileObj)
+          await safeUnlinkIfInsideUploadDir(aadhaarFileObj.filename);
         return res.status(409).json({
           error: "Aadhaar already used",
           errors: { aadhaar_no: "already_in_use" },
@@ -578,8 +589,13 @@ export const postCustomerKyc = async (req, res) => {
 
     if (pan_no) push("pan_no", pan_no);
     if (aadhaar_no) push("aadhaar_no", aadhaar_no);
-    if (panFileObj) push("pan_file_path", path.join(UPLOAD_SUBDIR, panFileObj.filename));
-    if (aadhaarFileObj) push("aadhaar_file_path", path.join(UPLOAD_SUBDIR, aadhaarFileObj.filename));
+    if (panFileObj)
+      push("pan_file_path", path.join(UPLOAD_SUBDIR, panFileObj.filename));
+    if (aadhaarFileObj)
+      push(
+        "aadhaar_file_path",
+        path.join(UPLOAD_SUBDIR, aadhaarFileObj.filename)
+      );
 
     if (toSet.length > 0) push("kyc_status", "PENDING");
 
@@ -599,7 +615,9 @@ export const postCustomerKyc = async (req, res) => {
         null,
         null,
         panFileObj ? path.join(UPLOAD_SUBDIR, panFileObj.filename) : null,
-        aadhaarFileObj ? path.join(UPLOAD_SUBDIR, aadhaarFileObj.filename) : null,
+        aadhaarFileObj
+          ? path.join(UPLOAD_SUBDIR, aadhaarFileObj.filename)
+          : null,
         toSet.length > 0 ? "PENDING" : null,
       ];
       await client.query(insertQ, insVals);
@@ -618,11 +636,15 @@ export const postCustomerKyc = async (req, res) => {
     await client.query("ROLLBACK").catch(() => {});
     console.error("postCustomerKyc error:", err);
     try {
-      if (req?.files?.pan_file?.[0]) await safeUnlinkIfInsideUploadDir(req.files.pan_file[0].filename);
-      if (req?.files?.aadhaar_file?.[0]) await safeUnlinkIfInsideUploadDir(req.files.aadhaar_file[0].filename);
+      if (req?.files?.pan_file?.[0])
+        await safeUnlinkIfInsideUploadDir(req.files.pan_file[0].filename);
+      if (req?.files?.aadhaar_file?.[0])
+        await safeUnlinkIfInsideUploadDir(req.files.aadhaar_file[0].filename);
     } catch (_) {}
     if (err?.code === "23505") {
-      return res.status(409).json({ error: "Unique constraint violation", detail: err.detail });
+      return res
+        .status(409)
+        .json({ error: "Unique constraint violation", detail: err.detail });
     }
     return safeServerError(res, err, "Failed to submit KYC");
   } finally {

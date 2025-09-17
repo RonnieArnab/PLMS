@@ -78,7 +78,9 @@ const AppContent = () => {
           path="/payments"
           element={
             <ProtectedRoute>
+              <KycGate>
               <PaymentPage />
+              </KycGate>
             </ProtectedRoute>
           }
         />

@@ -49,6 +49,20 @@ function safeServerError(res, err, msg = "Internal server error") {
   return res.status(500).json({ error: msg });
 }
 
+async function ensureNomineeColumns() {
+  const client = await pool.connect();
+  try {
+    await client.query(`ALTER TABLE customerprofile ADD COLUMN IF NOT EXISTS nominee VARCHAR(255) DEFAULT NULL;`);
+    await client.query(`ALTER TABLE customerprofile ADD COLUMN IF NOT EXISTS nominee_contact VARCHAR(20) DEFAULT NULL;`);
+    await client.query(`ALTER TABLE customerprofile ADD COLUMN IF NOT EXISTS date_of_birth DATE DEFAULT NULL;`);
+    await client.query(`ALTER TABLE customerprofile ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();`);
+  } catch (err) {
+    console.error("Error adding nominee columns:", err);
+  } finally {
+    client.release();
+  }
+}
+
 async function safeUnlinkIfInsideUploadDir(filename) {
   if (!filename) return;
   try {
@@ -62,6 +76,7 @@ async function safeUnlinkIfInsideUploadDir(filename) {
 }
 
 async function fetchCombinedUser(userId) {
+  await ensureNomineeColumns();
   const q = `
     SELECT u.user_id, u.email, u.role, u.phone_number,
            c.customer_id, c.full_name, c.aadhaar_no, c.pan_no, c.profession,
@@ -141,8 +156,6 @@ export const completeCustomerProfile = async (req, res) => {
       ifsc_code,
       account_type,
       is_primary,
-      nominee,
-      nominee_contact,
     } = req.body || {};
 
     if (
@@ -244,11 +257,10 @@ export const completeCustomerProfile = async (req, res) => {
       const insertQ = `
         INSERT INTO customerprofile
           (user_id, full_name, aadhaar_no, pan_no, profession, years_experience,
-          annual_income, kyc_status, address, account_id, nominee, nominee_contact, created_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
+          annual_income, kyc_status, address, account_id, created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
         RETURNING customer_id, user_id, full_name, aadhaar_no, pan_no, profession,
-        years_experience, annual_income, kyc_status, address, account_id,
-        nominee, nominee_contact, created_at
+        years_experience, annual_income, kyc_status, address, account_id, created_at
       `;
       const insVals = [
         userId,
@@ -261,8 +273,6 @@ export const completeCustomerProfile = async (req, res) => {
         "PENDING",
         address || null,
         accountIdToUse || null,
-        nominee || null,
-        nominee_contact || null,
       ];
       const insRes = await client.query(insertQ, insVals);
 
@@ -297,8 +307,9 @@ export const completeCustomerProfile = async (req, res) => {
       if (annual_income !== undefined) push("annual_income", annual_income);
       if (address) push("address", address);
       if (accountIdToUse) push("account_id", accountIdToUse);
-      if (nominee) push("nominee", nominee);
-      if (nominee_contact) push("nominee_contact", nominee_contact);
+      if (req.body.nominee !== undefined) push("nominee", req.body.nominee);
+      if (req.body.nominee_contact !== undefined) push("nominee_contact", req.body.nominee_contact);
+      if (req.body.date_of_birth !== undefined) push("date_of_birth", req.body.date_of_birth);
 
       if (!sets.length) {
         await client.query("ROLLBACK");
@@ -338,6 +349,7 @@ export const completeCustomerProfile = async (req, res) => {
 };
 
 export const patchCustomerMe = async (req, res) => {
+  await ensureNomineeColumns();
   const client = await pool.connect();
   try {
     const userId = req.user?.userId;
@@ -425,8 +437,8 @@ export const patchCustomerMe = async (req, res) => {
     if (!cpCheck.rows.length) {
       const insertQ = `
         INSERT INTO customerprofile (user_id, full_name, aadhaar_no, pan_no, profession,
-          years_experience, annual_income, address, nominee, nominee_contact, created_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
+          years_experience, annual_income, address, nominee, nominee_contact, date_of_birth, created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
         RETURNING *
       `;
       const iv = [
@@ -440,6 +452,7 @@ export const patchCustomerMe = async (req, res) => {
         updates.address || null,
         updates.nominee || null,
         updates.nominee_contact || null,
+        updates.date_of_birth || null,
       ];
       const insR = await client.query(insertQ, iv);
       await client.query("COMMIT");

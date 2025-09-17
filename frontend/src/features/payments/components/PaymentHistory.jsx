@@ -28,18 +28,18 @@ export default function PaymentHistory({ loading, history, onDownload }) {
     <div className="space-y-3">
       {history.map((p) => (
         <div
-          key={p.id}
+          key={p.id || p.transaction_ref}
           className="flex items-center justify-between p-3 rounded-md bg-base-200/40">
           <div>
             <div className="font-semibold">
-              {new Date(p.date).toLocaleDateString("en-IN")}
+              {new Date(p.date || p.payment_date).toLocaleDateString("en-IN")}
             </div>
             <div className="text-sm text-base-content/60">
-              {p.method} • {p.ref}
+              {p.method || p.payment_method} • {p.transaction_ref || p.id}
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <div className="font-semibold">₹{inr(p.amount)}</div>
+            <div className="font-semibold">₹{inr(p.amount || p.amount_paid)}</div>
             <Button variant="ghost" size="sm" onClick={() => onDownload(p)}>
               Download
             </Button>

@@ -98,14 +98,7 @@ export function UserDashboard() {
         const s = await fetchDashboardStats(); // ✅ Fetch updated stats after init
         const a = await fetchLoanApplications(user.id);
        console.log("normalized apps:", a);
-        const p = await apiHandler(fetchPaymentHistory, [
-          { month: "Jan", amount: 20000 },
-          { month: "Feb", amount: 25000 },
-          { month: "Mar", amount: 23000 },
-          { month: "Apr", amount: 28000 },
-          { month: "May", amount: 32000 },
-          { month: "Jun", amount: 25000 },
-        ]);
+        const p = await apiHandler(() => fetchPaymentHistory(user), []);
         const b = await apiHandler(async () => {
           const res = await fetch(
             `http://localhost:4000/api/loan-applications/user/${user.id}`
@@ -141,10 +134,18 @@ export function UserDashboard() {
     () => [
       {
         id: "Payments",
-        data: (payments || []).map((p) => ({
-          x: p.month || p.date || "-",
-          y: p.amount || p.payment_amount || 0,
-        })),
+        data: (payments || []).map((p) => {
+          // Handle both old hardcoded format and new API format
+          if (p.month) {
+            // Old hardcoded format
+            return { x: p.month, y: p.amount || 0 };
+          } else {
+            // New API format - group by month
+            const date = new Date(p.payment_date || p.date);
+            const month = date.toLocaleDateString('en-US', { month: 'short' });
+            return { x: month, y: parseFloat(p.amount_paid || p.amount || 0) };
+          }
+        }),
       },
     ],
     [payments]
@@ -169,8 +170,15 @@ export function UserDashboard() {
   const getLoanTitle = (loan, idx) =>
     loan?.product_name || loan?.loan_product || loan?.purpose || `Loan ${getLoanId(loan) || idx + 1}`;
   const getPaymentId = (p) => p?.payment_id || p?.id || null;
-  const getPaymentDesc = (p, idx) => p?.description || p?.note || p?.month || `Payment ${getPaymentId(p) || idx + 1}`;
-
+  const getPaymentDesc = (p, idx) => {
+    // Handle real payment data format
+    if (p?.payment_date) {
+      const date = new Date(p.payment_date).toLocaleDateString('en-IN');
+      return `Payment on ${date}`;
+    }
+    // Handle old hardcoded format
+    return p?.description || p?.note || p?.month || `Payment ${getPaymentId(p) || idx + 1}`;
+  };
 
   return (
     <DashboardLayout>

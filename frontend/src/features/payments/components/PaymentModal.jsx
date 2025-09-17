@@ -1,207 +1,239 @@
-import React, { useEffect, useState } from "react";
-import { motion } from "framer-motion";
+import React, { useState } from "react";
 import { Button } from "@components/ui/Button.jsx";
-import { Input } from "@components/ui/Input.jsx";
+import { X } from "lucide-react";
+import PaymentSuccessModal from "./PaymentSuccessModal.jsx";
+import { PaymentsService } from "@services/paymentService";
 
-export default function PaymentModal({ open, onClose, amount, onSuccess }) {
-  const [method, setMethod] = useState("card");
+export default function PaymentModal({ open, onClose, amount, onSuccess, userId, loanId, onDownload }) {
+  const [isAutopay, setIsAutopay] = useState(false);
   const [processing, setProcessing] = useState(false);
-  const [error, setError] = useState(null);
-  const [cardNumber, setCardNumber] = useState("");
-  const [upiId, setUpiId] = useState("");
-  const [bank, setBank] = useState("");
-
-  useEffect(() => {
-    if (!open) {
-      setMethod("card");
-      setProcessing(false);
-      setError(null);
-      setCardNumber("");
-      setUpiId("");
-      setBank("");
-    }
-  }, [open]);
-
-  const simulateNetwork = (ms = 1200) =>
-    new Promise((res) => setTimeout(res, ms));
-
-  async function handleStripeCardPayment() {
-    await simulateNetwork();
-    return {
-      ok: true,
-      id: `stripe_${Date.now()}`,
-      method: "Card",
-      ref: "STRP123",
-    };
-  }
-  async function handleRazorpayUpiPayment() {
-    await simulateNetwork();
-    return { ok: true, id: `rzp_${Date.now()}`, method: "UPI", ref: "RZP123" };
-  }
-  async function handleNetbankingPayment() {
-    await simulateNetwork();
-    return {
-      ok: true,
-      id: `nb_${Date.now()}`,
-      method: "Netbanking",
-      ref: "NBK123",
-    };
-  }
-
-  const handlePay = async () => {
-    setProcessing(true);
-    setError(null);
-    try {
-      let result;
-      if (method === "card") {
-        if (!cardNumber || cardNumber.length < 12)
-          throw new Error("Enter a valid card number (demo validation).");
-        result = await handleStripeCardPayment();
-      } else if (method === "upi") {
-        if (!upiId || !upiId.includes("@"))
-          throw new Error("Enter a valid UPI ID (e.g. name@bank).");
-        result = await handleRazorpayUpiPayment();
-      } else {
-        if (!bank) throw new Error("Select your bank for netbanking.");
-        result = await handleNetbankingPayment();
-      }
-      if (!result.ok) throw new Error(result.message || "Payment failed");
-      const payment = {
-        id: result.id,
-        date: new Date().toISOString().slice(0, 10),
-        amount,
-        method: result.method,
-        ref: result.ref,
-        payer: { name: "Arnab Ghosh", email: "arnab@example.com" },
-      };
-      onSuccess(payment);
-      setProcessing(false);
-      onClose();
-    } catch (err) {
-      setProcessing(false);
-      setError(err.message || "Payment failed");
-    }
-  };
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [completedPayment, setCompletedPayment] = useState(null);
 
   if (!open) return null;
+
+  // Validate required props
+  if (!userId) {
+    console.error('PaymentModal: userId is required but not provided');
+    alert('User authentication required. Please log in again.');
+    onClose();
+    return null;
+  }
+
+  console.log('PaymentModal initialized with:', { userId, loanId, amount });
+
+  async function startPayment() {
+    setProcessing(true);
+
+    // Check if Razorpay is loaded
+    if (!window.Razorpay) {
+      console.error("Razorpay SDK not loaded");
+      alert("Razorpay SDK not loaded. Please refresh the page and try again.");
+      setProcessing(false);
+      return;
+    }
+
+    console.log("Starting payment process...");
+
+    if (!isAutopay) {
+      // Hit backend to create order
+      try {
+        const order = await PaymentsService.createOrder(amount);
+
+        const options = {
+        key: "rzp_test_RIBPU0g2WXd7q9",
+        amount: order.amount,
+        currency: order.currency,
+        name: "Loan Management System",
+        description: "One-time EMI Payment",
+        order_id: order.id,
+        theme: {
+          color: "#528FF0"
+        },
+        modal: {
+          escape: true,
+          animation: true,
+          confirm_close: false,
+          backdropclose: true,
+          ondismiss: function() {
+            setProcessing(false);
+          }
+        },
+        method: {
+          netbanking: 1,
+          card: 1,
+          upi: 1,
+          wallet: 0
+        },
+        handler: async function (response) {
+          try {
+            console.log('Razorpay checkout response:', response);
+            console.log('loanId:', loanId, 'userId:', userId);
+
+            // Verify payment on backend and get details
+            const verifyPayload = {
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+              loan_id: loanId,
+              payer_user_id: userId
+            };
+
+            console.log('Sending to verify endpoint:', verifyPayload);
+
+            const data = await PaymentsService.verifyPayment(verifyPayload);
+            console.log('Verification response:', data);
+
+            if (data.ok) {
+              console.log('Payment verified and recorded successfully:', data.payment);
+              const paymentData = {
+                ...data.payment,
+                method: data.payment.payment_method,
+                date: data.payment.payment_date,
+                amount: data.payment.amount_paid,
+                transaction_ref: data.payment.transaction_reference
+              };
+              setCompletedPayment(paymentData);
+              setShowSuccess(true);
+              onSuccess(paymentData);
+            } else {
+              console.error('Payment verification failed:', data);
+              alert(`Payment verification failed: ${data.msg || 'Unknown error'}`);
+            }
+          } catch (error) {
+            console.error("Error processing payment:", error);
+            alert(`Payment processing failed: ${error.message}`);
+          }
+          setProcessing(false);
+          onClose();
+        }
+      };
+        const rzp = new window.Razorpay(options);
+        rzp.open();
+        setProcessing(false);
+      } catch (error) {
+        console.error("Error creating order:", error);
+        alert("Failed to create payment order. Please try again.");
+        setProcessing(false);
+        return;
+      }
+    } else {
+      // Autopay: create subscription
+      try {
+        const sub = await PaymentsService.createSubscription("plan_J7Hxxxxxx");
+
+        const options = {
+        key: "rzp_test_RIBPU0g2WXd7q9",
+        subscription_id: sub.id,
+        name: "Loan Management System",
+        description: "Autopay Subscription",
+        theme: {
+          color: "#528FF0"
+        },
+        modal: {
+          escape: true,
+          animation: true,
+          confirm_close: false,
+          backdropclose: true,
+          ondismiss: function() {
+            setProcessing(false);
+          }
+        },
+        method: {
+          netbanking: 1,
+          card: 1,
+          upi: 1,
+          wallet: 0
+        },
+        handler: async function (response) {
+          try {
+            // Record payment in database
+            const paymentData = await PaymentsService.makePayment({
+              user_id: userId,
+              loan_id: loanId,
+              amount,
+              payment_method: "Razorpay Autopay",
+              transaction_ref: response.razorpay_payment_id
+            });
+
+            if (paymentData) {
+              const paymentData = {
+                id: response.razorpay_payment_id,
+                date: new Date().toISOString(),
+                amount,
+                method: "Autopay",
+                transaction_ref: response.razorpay_payment_id
+              };
+              setCompletedPayment(paymentData);
+              setShowSuccess(true);
+              onSuccess(paymentData);
+            }
+          } catch (error) {
+            console.error("Error recording autopay:", error);
+          }
+          onClose();
+        }
+      };
+        const rzp = new window.Razorpay(options);
+        rzp.open();
+        setProcessing(false);
+      } catch (error) {
+        console.error("Error creating subscription:", error);
+        alert("Failed to create autopay subscription. Please try again.");
+        setProcessing(false);
+        return;
+      }
+    }
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div
-        className="absolute inset-0 bg-black/40"
-        onClick={() => !processing && onClose()}
+    <div className="fixed inset-0 flex items-center justify-center bg-black/40">
+      <div className="bg-white p-6 rounded-xl shadow-xl w-full max-w-md relative">
+        <button
+          onClick={onClose}
+          className="absolute top-4 right-4 p-1 rounded-full hover:bg-gray-100 transition-colors"
+          aria-label="Close modal"
+        >
+          <X className="w-5 h-5" />
+        </button>
+        <h3 className="text-lg font-semibold mb-4">Complete Payment</h3>
+
+        <div className="mb-4">
+          <label className="flex items-center">
+            <input
+              type="checkbox"
+              checked={isAutopay}
+              onChange={(e) => setIsAutopay(e.target.checked)}
+              className="mr-2"
+            />
+            Enable Autopay (Recurring)
+          </label>
+        </div>
+
+        <Button
+          variant="gradient"
+          disabled={processing}
+          onClick={startPayment}
+          style={{
+            backgroundImage: "linear-gradient(90deg,#84cc16,#22c55e)",
+            color: "white",
+          }}
+        >
+          {processing ? "Processing..." : `Pay ₹${amount}`}
+        </Button>
+      </div>
+
+      {/* Success Modal */}
+      <PaymentSuccessModal
+        open={showSuccess}
+        onClose={() => {
+          setShowSuccess(false);
+          setCompletedPayment(null);
+          onClose();
+        }}
+        payment={completedPayment}
+        onDownload={onDownload}
       />
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -12 }}
-        className="relative z-10 w-full max-w-xl bg-white dark:bg-slate-900 rounded-xl shadow-xl p-6">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h3 className="text-lg font-semibold">Complete Payment</h3>
-            <p className="text-sm text-base-content/60">
-              Pay ₹
-              {typeof amount === "number"
-                ? amount.toLocaleString("en-IN")
-                : amount}{" "}
-              using your preferred method
-            </p>
-          </div>
-
-          <button
-            className="btn btn-ghost btn-sm"
-            onClick={() => !processing && onClose()}>
-            Close
-          </button>
-        </div>
-
-        <div className="mt-4">
-          <div className="flex gap-2">
-            <button
-              onClick={() => setMethod("card")}
-              className={`btn btn-sm ${
-                method === "card" ? "btn-active" : "btn-ghost"
-              }`}>
-              Card
-            </button>
-            <button
-              onClick={() => setMethod("upi")}
-              className={`btn btn-sm ${
-                method === "upi" ? "btn-active" : "btn-ghost"
-              }`}>
-              UPI
-            </button>
-            <button
-              onClick={() => setMethod("netbanking")}
-              className={`btn btn-sm ${
-                method === "netbanking" ? "btn-active" : "btn-ghost"
-              }`}>
-              Netbanking
-            </button>
-          </div>
-
-          <div className="mt-4">
-            {method === "card" && (
-              <div className="space-y-3">
-                <Input
-                  value={cardNumber}
-                  onChange={(e) => setCardNumber(e.target.value)}
-                  placeholder="Card number (demo)"
-                />
-                <div className="flex gap-2">
-                  <Input placeholder="MM/YY" className="flex-1" />
-                  <Input placeholder="CVC" className="w-24" />
-                </div>
-              </div>
-            )}
-
-            {method === "upi" && (
-              <Input
-                value={upiId}
-                onChange={(e) => setUpiId(e.target.value)}
-                placeholder="example@bank (UPI ID)"
-              />
-            )}
-
-            {method === "netbanking" && (
-              <div>
-                <select className="select w-full">
-                  <option value="">Select bank (demo)</option>
-                  <option value="hdfc">HDFC</option>
-                  <option value="sbi">SBI</option>
-                  <option value="axis">Axis</option>
-                </select>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="mt-6 flex items-center justify-between gap-4">
-          <div>
-            {error && <div className="text-sm text-error mb-2">{error}</div>}
-            <div className="text-sm text-base-content/60">
-              Secure payment — card details are not stored.
-            </div>
-          </div>
-          <div>
-            <Button
-              variant="gradient"
-              onClick={handlePay}
-              disabled={processing}
-              style={{
-                backgroundImage: "linear-gradient(90deg,#84cc16,#22c55e)",
-                color: "white",
-              }}>
-              {processing
-                ? "Processing..."
-                : `Pay ₹${
-                    typeof amount === "number"
-                      ? amount.toLocaleString("en-IN")
-                      : amount
-                  }`}
-            </Button>
-          </div>
-        </div>
-      </motion.div>
     </div>
   );
 }

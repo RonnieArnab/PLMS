@@ -1,8 +1,7 @@
-
-
 import React, { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {Download, DollarSign, Calendar, CreditCard, FileText } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { DashboardLayout } from "@components/layout/DashboardLayout";
 import MotionFadeIn from "@components/ui/MotionFadeIn.jsx";
 import { Paper } from "@components/ui/Paper.jsx";
@@ -17,7 +16,9 @@ import { jsPDF } from "jspdf";
 
 
 export function MyLoans() {
+
   const { user } = useAuth(); // ✅ Only call inside a component
+  const navigate = useNavigate();
   const [loansData, setLoansData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -281,7 +282,11 @@ const handleDownload = (loan) => {
   };
 
 
-  const handlePay = (loan) => console.log("pay", loan.id);
+  const handlePay = (loan) => {
+    console.log("Navigating to payments for loan:", loan.id);
+    // Navigate to payments page with loan data
+    navigate(`/payments?loan=${loan.id}&amount=${loan.monthlyPayment || loan.remainingBalance}&dueDate=${loan.nextPaymentDate || ''}&product=${encodeURIComponent(loan.productName || '')}`);
+  };
 
   return (
     <DashboardLayout>
@@ -322,7 +327,7 @@ const handleDownload = (loan) => {
           </Paper>
         </MotionFadeIn>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <KPIStat
             icon={DollarSign}
             label="Total Outstanding"
@@ -333,19 +338,6 @@ const handleDownload = (loan) => {
             icon={CreditCard}
             label="Monthly Payment"
             value={`₹${inr(totalMonthly)}`}
-            loading={loading}
-          />
-          <KPIStat
-            icon={Calendar}
-            label="Next Payment"
-            value={
-              nextDate
-                ? nextDate.toLocaleDateString(undefined, {
-                    month: "short",
-                    day: "2-digit",
-                  })
-                : "-"
-            }
             loading={loading}
           />
         </div>
@@ -436,19 +428,19 @@ const handleDownload = (loan) => {
           <tr>
             <th className="border border-gray-300 px-4 py-2">Approved Date</th>
             <td className="border border-gray-300 px-4 py-2">
-              {selectedLoan.approvedDate ? new Date(selectedLoan.approvedDate).toLocaleDateString() : "-"}
+              {selectedLoan.appliedDate ? new Date(selectedLoan.appliedDate).toLocaleDateString() : "-"}
             </td>
           </tr>
           <tr>
             <th className="border border-gray-300 px-4 py-2">Disbursement Date</th>
             <td className="border border-gray-300 px-4 py-2">
-              {selectedLoan.disbursementDate ? new Date(selectedLoan.disbursementDate).toLocaleDateString() : "-"}
+              {selectedLoan.appliedDate ? new Date(selectedLoan.appliedDate).toLocaleDateString() : "-"}
             </td>
           </tr>
           <tr>
             <th className="border border-gray-300 px-4 py-2">Closed Date</th>
             <td className="border border-gray-300 px-4 py-2">
-              {selectedLoan.closedDate ? new Date(selectedLoan.closedDate).toLocaleDateString() : "-"}
+              {selectedLoan.completionDate ? new Date(selectedLoan.completionDate).toLocaleDateString() : (selectedLoan.closedDate ? new Date(selectedLoan.closedDate).toLocaleDateString() : "-")}
             </td>
           </tr>
           <tr>
@@ -458,6 +450,10 @@ const handleDownload = (loan) => {
           <tr>
             <th className="border border-gray-300 px-4 py-2">Monthly Payment</th>
             <td className="border border-gray-300 px-4 py-2">₹{inr(selectedLoan.monthlyPayment)}</td>
+          </tr>
+          <tr>
+            <th className="border border-gray-300 px-4 py-2">Total Payable</th>
+            <td className="border border-gray-300 px-4 py-2">₹{inr(selectedLoan.totalPayable)}</td>
           </tr>
           <tr>
             <th className="border border-gray-300 px-4 py-2">Remaining Balance</th>

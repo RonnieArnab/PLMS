@@ -16,6 +16,7 @@ import notificationRoutes from "./routes/notifications.js";
 import kycRoutes from "./routes/kyc.js";
 import authRoutes from "./routes/auth.js";
 import adminRoutes from "./routes/admin.js";
+import dashboardRoutes from "./routes/dashboard.js";
 
 dotenv.config();
 const app = express();
@@ -42,9 +43,10 @@ app.use("/api/documents", documentRoutes);
 app.use("/api/repayments", repaymentRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/kyc", kycRoutes);
 
 app.get("/", (req, res) => res.send("Loan Management API running 🚀"));
 
-const PORT = process.env.PORT || 4000;
+const PORT = Number(process.env.PORT) || 4000;
 app.listen(PORT, () => console.log(`✅ Server started on port ${PORT}`));

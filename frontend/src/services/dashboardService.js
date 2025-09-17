@@ -35,14 +35,7 @@ const fallback = {
       interestRate: null,
     },
   ],
-  payments: [
-    { month: "Jan", amount: 2500 },
-    { month: "Feb", amount: 2500 },
-    { month: "Mar", amount: 2500 },
-    { month: "Apr", amount: 2500 },
-    { month: "May", amount: 2500 },
-    { month: "Jun", amount: 2500 },
-  ],
+  payments: [], // Empty array as fallback when API fails
   portfolio: [
     { name: "Equipment Loan", value: 50000, color: "#3B82F6" },
     { name: "Office Setup", value: 75000, color: "#10B981" },
@@ -144,11 +137,21 @@ export async function fetchLoanApplications(userId) {
   }
 }
 
-export async function fetchPaymentHistory() {
+export async function fetchPaymentHistory(user = null) {
   try {
-    const { data } = await api.get(API_ROUTES.dashboard.payments);
-    return data; // shape: [{ month, amount }, ...]
-  } catch {
+    // If user is not provided, try to get from localStorage as fallback
+    if (!user) {
+      user = JSON.parse(localStorage.getItem('user') || '{}');
+    }
+
+    if (!user?.id) {
+      throw new Error('User not authenticated');
+    }
+
+    const { data } = await api.get(API_ROUTES.payments.getByUser(user.id));
+    return data.data || []; // Return actual payment data from backend
+  } catch (error) {
+    console.error('Error fetching payment history:', error);
     return fallback.payments;
   }
 }

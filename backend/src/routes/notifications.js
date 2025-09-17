@@ -13,12 +13,13 @@
 // backend/src/routes/notifications.js
 import express from "express";
 import * as controller from "../controllers/notifications.js";
+import { authenticate } from "../middleware/authMiddleware.js";
 
 const router = express.Router();
 
-// Public (or use middleware to protect)
-router.get("/", controller.getAll); // admin / dev route
-router.get("/user/:userId", controller.getForUser);
+// Routes
+router.get("/", authenticate, controller.getAll); // admin / dev route
+router.get("/user/:userId", authenticate, controller.getForUser);
 
 // CRUD
 router.post("/", controller.create);

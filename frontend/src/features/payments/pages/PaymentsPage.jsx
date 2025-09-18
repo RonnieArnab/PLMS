@@ -26,10 +26,10 @@ import { AnimatePresence } from "framer-motion";
 export default function PaymentsPage() {
   const { user, fetchCustomer } = useAuth();
   const [searchParams] = useSearchParams();
-  const loanId = searchParams.get('loan');
-  const urlAmount = searchParams.get('amount');
-  const urlDueDate = searchParams.get('dueDate');
-  const urlProduct = searchParams.get('product');
+  const loanId = searchParams.get("loan");
+  const urlAmount = searchParams.get("amount");
+  const urlDueDate = searchParams.get("dueDate");
+  const urlProduct = searchParams.get("product");
 
   // copy state/logic from original page
   const [allLoansData, setAllLoansData] = useState([]);
@@ -43,7 +43,7 @@ export default function PaymentsPage() {
     const fetchData = async () => {
       if (!user?.id) return;
 
-      console.log('PaymentsPage useEffect triggered for user:', user.id);
+      console.log("PaymentsPage useEffect triggered for user:", user.id);
 
       setLoading(true);
       try {
@@ -52,26 +52,34 @@ export default function PaymentsPage() {
         if (profileResponse?.ok) {
           const profile = profileResponse.customer || profileResponse.user;
           setProfileData(profile);
-          console.log('Profile data fetched:', profile);
+          console.log("Profile data fetched:", profile);
         }
 
         // Fetch all user's loans with product information
-        console.log('Fetching all user loans for user:', user.id);
-        const userLoansResponse = await fetch(`http://localhost:4000/api/loan-applications/user/${user.id}`);
+        console.log("Fetching all user loans for user:", user.id);
+        const userLoansResponse = await fetch(
+          `http://localhost:4000/api/loan-applications/user/${user.id}`
+        );
         if (userLoansResponse.ok) {
           const userLoansResult = await userLoansResponse.json();
-          console.log('User loans response:', userLoansResult);
+          console.log("User loans response:", userLoansResult);
 
-          if (userLoansResult.success && userLoansResult.data && userLoansResult.data.length > 0) {
-            console.log('Found loans:', userLoansResult.data.length);
+          if (
+            userLoansResult.success &&
+            userLoansResult.data &&
+            userLoansResult.data.length > 0
+          ) {
+            console.log("Found loans:", userLoansResult.data.length);
 
             // Process each loan to get payment data and product info
             const loansWithPayments = await Promise.all(
               userLoansResult.data.map(async (loan) => {
                 // Fetch product information for this loan
-                let productName = 'General Loan';
+                let productName = "General Loan";
                 try {
-                  const productResponse = await fetch(`http://localhost:4000/api/loan-products/${loan.product_id}`);
+                  const productResponse = await fetch(
+                    `http://localhost:4000/api/loan-products/${loan.product_id}`
+                  );
                   if (productResponse.ok) {
                     const productResult = await productResponse.json();
                     if (productResult.success && productResult.data) {
@@ -79,11 +87,17 @@ export default function PaymentsPage() {
                     }
                   }
                 } catch (error) {
-                  console.log('Could not fetch product info for loan:', loan.loan_id, error);
+                  console.log(
+                    "Could not fetch product info for loan:",
+                    loan.loan_id,
+                    error
+                  );
                 }
                 try {
                   // Fetch payments for this loan
-                  const paymentsResponse = await PaymentsService.getByLoan(loan.loan_id);
+                  const paymentsResponse = await PaymentsService.getByLoan(
+                    loan.loan_id
+                  );
                   const payments = paymentsResponse?.data || [];
 
                   // Calculate payment amount and due date
@@ -91,7 +105,8 @@ export default function PaymentsPage() {
                   let dueDate = null;
 
                   // Calculate monthly payment using EMI formula
-                  const principal = loan.approved_amount || loan.loan_amount || 0;
+                  const principal =
+                    loan.approved_amount || loan.loan_amount || 0;
                   const tenure = loan.tenure_months || 1;
                   const interestRate = loan.interest_rate_apr || 0;
 
@@ -101,32 +116,50 @@ export default function PaymentsPage() {
 
                   // Try to get next payment from repayment schedule
                   try {
-                    const repaymentResponse = await RepaymentService.getNext(loan.loan_id);
-                    if (repaymentResponse.status === "success" && repaymentResponse.data) {
-                      paymentAmount = repaymentResponse.data.total_due || paymentAmount;
+                    const repaymentResponse = await RepaymentService.getNext(
+                      loan.loan_id
+                    );
+                    if (
+                      repaymentResponse.status === "success" &&
+                      repaymentResponse.data
+                    ) {
+                      paymentAmount =
+                        repaymentResponse.data.total_due || paymentAmount;
                       dueDate = repaymentResponse.data.due_date || dueDate;
                     }
                   } catch (error) {
-                    console.log('No repayment schedule found for loan:', loan.loan_id, error.message);
+                    console.log(
+                      "No repayment schedule found for loan:",
+                      loan.loan_id,
+                      error.message
+                    );
                     // Use default due date if no repayment schedule
                     if (!dueDate) {
                       const nextMonth = new Date();
                       nextMonth.setMonth(nextMonth.getMonth() + 1);
-                      dueDate = nextMonth.toISOString().split('T')[0];
+                      dueDate = nextMonth.toISOString().split("T")[0];
                     }
                   }
 
                   // Calculate penalty if overdue
                   const currentDate = new Date();
                   const paymentDueDate = dueDate ? new Date(dueDate) : null;
-                  const isOverdue = paymentDueDate && currentDate > paymentDueDate;
-                  const penaltyAmount = isOverdue ? Math.round(paymentAmount * 0.02) : 0;
+                  const isOverdue =
+                    paymentDueDate && currentDate > paymentDueDate;
+                  const penaltyAmount = isOverdue
+                    ? Math.round(paymentAmount * 0.02)
+                    : 0;
                   const totalAmountWithPenalty = paymentAmount + penaltyAmount;
 
                   // For completed loans, set amount due to 0
                   // Allow for small rounding differences (less than 1 rupee)
-                  const isCompleted = loan.isCompleted || (loan.remainingBalance !== undefined && loan.remainingBalance <= 1);
-                  const finalTotalDue = isCompleted ? 0 : totalAmountWithPenalty;
+                  const isCompleted =
+                    loan.isCompleted ||
+                    (loan.remainingBalance !== undefined &&
+                      loan.remainingBalance <= 1);
+                  const finalTotalDue = isCompleted
+                    ? 0
+                    : totalAmountWithPenalty;
 
                   return {
                     ...loan,
@@ -138,23 +171,31 @@ export default function PaymentsPage() {
                       penaltyAmount: penaltyAmount,
                       isOverdue: isOverdue,
                       dueDate: dueDate,
-                      lastPayment: payments.length > 0 ? payments[0] : {
-                        id: "N/A",
-                        date: "No payments yet",
-                        amount: 0,
-                        method: "N/A",
-                        transaction_ref: "N/A"
-                      },
-                      upcomingPayments: dueDate && paymentAmount > 0 && !isCompleted ? [{
-                        id: `pay_${loan.loan_id}_${Date.now()}`,
-                        date: dueDate,
-                        amount: paymentAmount,
-                        status: isOverdue ? "due" : "upcoming"
-                      }] : []
-                    }
+                      lastPayment:
+                        payments.length > 0
+                          ? payments[0]
+                          : {
+                              id: "N/A",
+                              date: "No payments yet",
+                              amount: 0,
+                              method: "N/A",
+                              transaction_ref: "N/A",
+                            },
+                      upcomingPayments:
+                        dueDate && paymentAmount > 0 && !isCompleted
+                          ? [
+                              {
+                                id: `pay_${loan.loan_id}_${Date.now()}`,
+                                date: dueDate,
+                                amount: paymentAmount,
+                                status: isOverdue ? "due" : "upcoming",
+                              },
+                            ]
+                          : [],
+                    },
                   };
                 } catch (error) {
-                  console.error('Error processing loan:', loan.loan_id, error);
+                  console.error("Error processing loan:", loan.loan_id, error);
                   return {
                     ...loan,
                     payments: [],
@@ -169,27 +210,27 @@ export default function PaymentsPage() {
                         date: "No payments yet",
                         amount: 0,
                         method: "N/A",
-                        transaction_ref: "N/A"
+                        transaction_ref: "N/A",
                       },
-                      upcomingPayments: []
-                    }
+                      upcomingPayments: [],
+                    },
                   };
                 }
               })
             );
 
             setAllLoansData(loansWithPayments);
-            console.log('All loans with payments data:', loansWithPayments);
+            console.log("All loans with payments data:", loansWithPayments);
           } else {
-            console.log('No loans found for user');
+            console.log("No loans found for user");
             setAllLoansData([]);
           }
         } else {
-          console.log('Failed to fetch user loans:', userLoansResponse.status);
+          console.log("Failed to fetch user loans:", userLoansResponse.status);
           setAllLoansData([]);
         }
       } catch (error) {
-        console.error('API Error:', error);
+        console.error("API Error:", error);
         setAllLoansData([]);
       } finally {
         setLoading(false);
@@ -205,13 +246,15 @@ export default function PaymentsPage() {
     let completionDate = null;
 
     // Sort payments by date (most recent first)
-    const sortedPayments = [...(payments || [])].sort((a, b) =>
-      new Date(b.payment_date || b.date) - new Date(a.payment_date || a.date)
+    const sortedPayments = [...(payments || [])].sort(
+      (a, b) =>
+        new Date(b.payment_date || b.date) - new Date(a.payment_date || a.date)
     );
 
     for (const payment of sortedPayments) {
       const amount = payment.amount || payment.amount_paid || 0;
-      const paymentAmount = typeof amount === 'string' ? parseFloat(amount) || 0 : amount;
+      const paymentAmount =
+        typeof amount === "string" ? parseFloat(amount) || 0 : amount;
       totalPaid += paymentAmount;
     }
 
@@ -229,7 +272,9 @@ export default function PaymentsPage() {
     const userProfile = profileData || user;
 
     // Find the loan details for this payment
-    const loanDetails = allLoansData.find(loan => loan.loan_id === payment.loan_id);
+    const loanDetails = allLoansData.find(
+      (loan) => loan.loan_id === payment.loan_id
+    );
 
     downloadReceiptPdf(payment, userProfile, loanDetails);
   };
@@ -237,13 +282,13 @@ export default function PaymentsPage() {
   // Handle Excel export download
   const handleDownloadAllStatements = async () => {
     try {
-      console.log('Downloading Excel statements for user:', user?.id);
+      console.log("Downloading Excel statements for user:", user?.id);
 
       const response = await PaymentsService.exportStatements(user?.id);
 
       // Get filename from response headers
-      const contentDisposition = response.headers?.get('Content-Disposition');
-      let filename = 'Payment_Statement.xlsx';
+      const contentDisposition = response.headers?.get("Content-Disposition");
+      let filename = "Payment_Statement.xlsx";
 
       if (contentDisposition) {
         const filenameMatch = contentDisposition.match(/filename="(.+)"/);
@@ -255,7 +300,7 @@ export default function PaymentsPage() {
       // Create blob and download
       const blob = await response.data;
       const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
+      const a = document.createElement("a");
       a.href = url;
       a.download = filename;
       document.body.appendChild(a);
@@ -263,10 +308,10 @@ export default function PaymentsPage() {
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
 
-      console.log('Excel file downloaded successfully:', filename);
+      console.log("Excel file downloaded successfully:", filename);
     } catch (error) {
-      console.error('Error downloading Excel file:', error);
-      alert('Failed to download Excel file. Please try again.');
+      console.error("Error downloading Excel file:", error);
+      alert("Failed to download Excel file. Please try again.");
     }
   };
 
@@ -275,43 +320,61 @@ export default function PaymentsPage() {
     if (!loading && dues && (loanId || loanData)) {
       setModalOpen(true);
     } else {
-      console.log('Cannot open payment modal: data not ready', { loading, dues, loanId, loanData });
+      console.log("Cannot open payment modal: data not ready", {
+        loading,
+        dues,
+        loanId,
+        loanData,
+      });
     }
   };
   const handlePaymentSuccess = async (payment, loanData) => {
-    console.log('Payment success:', payment, 'for loan:', loanData.loan_id);
+    console.log("Payment success:", payment, "for loan:", loanData.loan_id);
 
     // Show success message
     setResult({ ok: true, message: "Payment recorded successfully! 🎉" });
 
     // Refresh data for the specific loan
     try {
-      const paymentsResponse = await PaymentsService.getByLoan(loanData.loan_id);
-      console.log('Refreshed payments data for loan:', loanData.loan_id, paymentsResponse);
+      const paymentsResponse = await PaymentsService.getByLoan(
+        loanData.loan_id
+      );
+      console.log(
+        "Refreshed payments data for loan:",
+        loanData.loan_id,
+        paymentsResponse
+      );
 
-      if (paymentsResponse && paymentsResponse.success && paymentsResponse.data) {
+      if (
+        paymentsResponse &&
+        paymentsResponse.success &&
+        paymentsResponse.data
+      ) {
         const updatedPayments = paymentsResponse.data;
 
         // Update the specific loan in allLoansData
-        setAllLoansData(prevLoans =>
-          prevLoans.map(loan =>
+        setAllLoansData((prevLoans) =>
+          prevLoans.map((loan) =>
             loan.loan_id === loanData.loan_id
               ? {
                   ...loan,
                   payments: updatedPayments,
                   dues: {
                     ...loan.dues,
-                    lastPayment: updatedPayments.length > 0 ? updatedPayments[0] : loan.dues.lastPayment
-                  }
+                    lastPayment:
+                      updatedPayments.length > 0
+                        ? updatedPayments[0]
+                        : loan.dues.lastPayment,
+                  },
                 }
               : loan
           )
         );
 
-        console.log('Updated loan data after payment:', loanData.loan_id);
+        console.log("Updated loan data after payment:", loanData.loan_id);
       }
     } catch (error) {
-      console.error('Error refreshing payments after success:', error);
+      console.error("Error refreshing payments after success:", error);
     }
   };
 
@@ -337,10 +400,10 @@ export default function PaymentsPage() {
               </div>
 
               <div className="flex items-center gap-3">
-                <Input
+                {/* <Input
                   placeholder="Search receipts / refs..."
                   className="max-w-sm hidden md:block"
-                />
+                /> */}
                 <Button
                   variant="gradient"
                   size="md"
@@ -362,7 +425,10 @@ export default function PaymentsPage() {
         {/* Render payment cards for each loan */}
         {allLoansData.map((loanData, index) => {
           const totalPayable = loanData.totalPayable || 0;
-          const { totalPaid: loanTotalPaid, completionDate } = getLoanTotalPaid(loanData.payments, totalPayable);
+          const { totalPaid: loanTotalPaid, completionDate } = getLoanTotalPaid(
+            loanData.payments,
+            totalPayable
+          );
 
           return (
             <MotionFadeIn key={loanData.loan_id}>
@@ -370,25 +436,39 @@ export default function PaymentsPage() {
                 {/* Loan type header */}
                 <div className="text-center">
                   <h2 className="text-2xl font-bold text-gray-800">
-                    {loanData.productName || loanData.name || `Loan ${index + 1}`}
+                    {loanData.productName ||
+                      loanData.name ||
+                      `Loan ${index + 1}`}
                   </h2>
                   <p className="text-sm text-gray-600 mt-1">
-                    Amount: ₹{loanData.approved_amount?.toLocaleString('en-IN') || loanData.loan_amount?.toLocaleString('en-IN') || 'N/A'} •
-                    Tenure: {loanData.tenure_months} months •
-                    Rate: {loanData.interest_rate_apr}%
+                    Amount: ₹
+                    {loanData.approved_amount?.toLocaleString("en-IN") ||
+                      loanData.loan_amount?.toLocaleString("en-IN") ||
+                      "N/A"}{" "}
+                    • Tenure: {loanData.tenure_months} months • Rate:{" "}
+                    {loanData.interest_rate_apr}%
                   </p>
                   {/* Show completion status */}
                   {loanData.isCompleted && (
                     <div className="mt-2 inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-800">
-                      <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
-                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                      <svg
+                        className="w-4 h-4 mr-1"
+                        fill="currentColor"
+                        viewBox="0 0 20 20">
+                        <path
+                          fillRule="evenodd"
+                          d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                          clipRule="evenodd"
+                        />
                       </svg>
                       Loan Completed - All Installments Paid
                     </div>
                   )}
                   {/* Show payment progress */}
                   <p className="text-xs text-gray-500 mt-1">
-                    Payments Made: {loanData.paymentCount || 0} / {loanData.totalInstallments || loanData.tenure_months} installments
+                    Payments Made: {loanData.paymentCount || 0} /{" "}
+                    {loanData.totalInstallments || loanData.tenure_months}{" "}
+                    installments
                   </p>
                 </div>
 
@@ -411,7 +491,12 @@ export default function PaymentsPage() {
                     setModalOpen(true);
                   }}
                   result={result}
-                  canPay={!loading && loanData.dues && loanData.dues.totalDue > 0 && !loanData.isCompleted}
+                  canPay={
+                    !loading &&
+                    loanData.dues &&
+                    loanData.dues.totalDue > 0 &&
+                    !loanData.isCompleted
+                  }
                   isCompleted={loanData.isCompleted}
                   totalPaid={loanTotalPaid}
                   completionDate={completionDate}
@@ -432,7 +517,9 @@ export default function PaymentsPage() {
         {allLoansData.length === 0 && !loading && (
           <MotionFadeIn>
             <div className="text-center py-12">
-              <p className="text-gray-500 text-lg">No loans found. Apply for a loan to start making payments.</p>
+              <p className="text-gray-500 text-lg">
+                No loans found. Apply for a loan to start making payments.
+              </p>
             </div>
           </MotionFadeIn>
         )}

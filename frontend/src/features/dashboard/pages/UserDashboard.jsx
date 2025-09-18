@@ -18,6 +18,7 @@ import {
 
 import { Layers, TrendingUp, Clock, CheckCircle, Download } from "lucide-react";
 import { Card } from "@components/ui/Card.jsx";
+import { useNavigate } from "react-router-dom";
 
 // ✅ API handler wrapper
 async function apiHandler(fn, fallback) {
@@ -83,7 +84,7 @@ export function UserDashboard() {
   const [loading, setLoading] = useState(true);
   const [customData, setCustomData] = useState([]);
   const [glimpseLoading, setGlimpseLoading] = useState(false);
-
+  const navigate = useNavigate();
   const { isDark } = useTheme();
   const { user } = useAuth();
 
@@ -97,7 +98,7 @@ export function UserDashboard() {
 
         const s = await fetchDashboardStats(); // ✅ Fetch updated stats after init
         const a = await fetchLoanApplications(user.id);
-       console.log("normalized apps:", a);
+        console.log("normalized apps:", a);
         const p = await apiHandler(() => fetchPaymentHistory(user), []);
         const b = await apiHandler(async () => {
           const res = await fetch(
@@ -142,7 +143,7 @@ export function UserDashboard() {
           } else {
             // New API format - group by month
             const date = new Date(p.payment_date || p.date);
-            const month = date.toLocaleDateString('en-US', { month: 'short' });
+            const month = date.toLocaleDateString("en-US", { month: "short" });
             return { x: month, y: parseFloat(p.amount_paid || p.amount || 0) };
           }
         }),
@@ -163,21 +164,32 @@ export function UserDashboard() {
     "Credit Score": CheckCircle,
   };
 
-  const loansGlimpse = Array.isArray(applications) ? applications.slice(0, 5) : [];
+  const loansGlimpse = Array.isArray(applications)
+    ? applications.slice(0, 5)
+    : [];
   const paymentsGlimpse = Array.isArray(payments) ? payments.slice(0, 5) : [];
 
-  const getLoanId = (loan) => loan?.id || loan?.loan_id || loan?.application_id || null;
+  const getLoanId = (loan) =>
+    loan?.id || loan?.loan_id || loan?.application_id || null;
   const getLoanTitle = (loan, idx) =>
-    loan?.product_name || loan?.loan_product || loan?.purpose || `Loan ${getLoanId(loan) || idx + 1}`;
+    loan?.product_name ||
+    loan?.loan_product ||
+    loan?.purpose ||
+    `Loan ${getLoanId(loan) || idx + 1}`;
   const getPaymentId = (p) => p?.payment_id || p?.id || null;
   const getPaymentDesc = (p, idx) => {
     // Handle real payment data format
     if (p?.payment_date) {
-      const date = new Date(p.payment_date).toLocaleDateString('en-IN');
+      const date = new Date(p.payment_date).toLocaleDateString("en-IN");
       return `Payment on ${date}`;
     }
     // Handle old hardcoded format
-    return p?.description || p?.note || p?.month || `Payment ${getPaymentId(p) || idx + 1}`;
+    return (
+      p?.description ||
+      p?.note ||
+      p?.month ||
+      `Payment ${getPaymentId(p) || idx + 1}`
+    );
   };
 
   return (
@@ -218,7 +230,6 @@ export function UserDashboard() {
               <ChartSkeleton />
             </>
           ) : (
-            
             <ChartCards
               lineData={lineData}
               pieData={pieData}
@@ -230,7 +241,7 @@ export function UserDashboard() {
 
         {/* Applications Table */}
         <div>
-          <h3 className="text-lg font-semibold mb-3">     Your Loans</h3>
+          <h3 className="text-lg font-semibold mb-3"> Your Loans</h3>
           {loading ? (
             <TableSkeleton />
           ) : (
@@ -240,11 +251,11 @@ export function UserDashboard() {
 
         {/* NEW: Glimpse Row for My Loans & Payments (clickable) */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-         
-
           <Card className="p-4">
             <div className="flex items-center justify-between mb-3">
-              <h4 className="text-md font-semibold">Recent Payments (glimpse)</h4>
+              <h4 className="text-md font-semibold">
+                Recent Payments (glimpse)
+              </h4>
               <div className="text-sm text-gray-500">
                 {paymentsGlimpse.length} shown
               </div>
@@ -259,20 +270,28 @@ export function UserDashboard() {
                 {paymentsGlimpse.map((pay, i) => {
                   const payId = getPaymentId(pay);
                   const desc = getPaymentDesc(pay, i);
-                  const detailUrl = payId ? `/payments#payments-section-${payId}` : "/payments#payments-section";
-                  const amount = pay?.amount || pay?.payment_amount || pay?.paid_amount || 0;
+                  const detailUrl = payId
+                    ? `/payments#payments-section-${payId}`
+                    : "/payments#payments-section";
+                  const amount =
+                    pay?.amount || pay?.payment_amount || pay?.paid_amount || 0;
 
                   return (
                     <li key={payId || i} className="border rounded p-0">
                       <a
                         href={detailUrl}
-                        className="flex justify-between items-center no-underline hover:bg-base-200/60 p-3 rounded"
-                      >
+                        className="flex justify-between items-center no-underline hover:bg-base-200/60 p-3 rounded">
                         <div>
-                          <div className="font-medium text-sm text-current">{desc}</div>
-                          <div className="text-xs text-gray-500">{/* optional subtext */}</div>
+                          <div className="font-medium text-sm text-current">
+                            {desc}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            {/* optional subtext */}
+                          </div>
                         </div>
-                        <div className="text-xs text-gray-600">₹{inr(amount)}</div>
+                        <div className="text-xs text-gray-600">
+                          ₹{inr(amount)}
+                        </div>
                       </a>
                     </li>
                   );
@@ -281,20 +300,19 @@ export function UserDashboard() {
             )}
 
             <div className="mt-3 text-right">
-              <a href="/payments#payments-section" className="text-sm text-indigo-600 hover:underline">
+              <Button onClick={() => navigate("/payments")}>
                 View all payments →
-              </a>
+              </Button>
             </div>
           </Card>
         </div>
 
-        {/* Actions */}
+        {/* Actions
         <div className="flex items-center justify-end gap-3">
           <Button
             variant="outline"
             onClick={() => console.log("export CSV")}
-            disabled={loading}
-          >
+            disabled={loading}>
             <Download className="w-4 h-4" />
             Export CSV
           </Button>
@@ -306,15 +324,15 @@ export function UserDashboard() {
               backgroundImage: "linear-gradient(90deg,#84cc16,#22c55e)",
               color: "white",
             }}
-            disabled={loading}
-          >
+            disabled={loading}>
             Make a Payment
           </Button>
-        </div>
+        </div> */}
 
-        <div className="mt-6 text-sm text-gray-500">
-          Showing up to 5 recent items from each list. Click into the Loans or Payments pages for full details.
-        </div>
+        {/* <div className="mt-6 text-sm text-gray-500">
+          Showing up to 5 recent items from each list. Click into the Loans or
+          Payments pages for full details.
+        </div> */}
       </div>
     </DashboardLayout>
   );

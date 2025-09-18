@@ -1,20 +1,14 @@
-// src/features/kyc/hooks/useKYC.js
+// src/features/kyc/hooks/useKyc.js
 import { useCallback, useEffect, useState } from "react";
 import api from "@api/api";
 
 /**
- * useKYC - fetch latest KYC records for current user
- * Expected server response shape:
- * {
- *   ok: true,
- *   records: {
- *     AADHAAR: { id, status, confidence, parsed, xmlDownloadRoute, ... },
- *     PAN: { id, status, confidence, parsed, xmlDownloadRoute, ... }
- *   }
- * }
+ * useKYC - simplified: only Aadhaar
+ * Server expected shape for /api/kyc/status:
+ * { ok: true, status: { customer_id, aadhaar_no, aadhaar_kyc_status, kyc_status, latest_kyc_id } }
  */
 export default function useKYC({ autoFetch = true } = {}) {
-  const [kyc, setKyc] = useState({ AADHAAR: null, PAN: null });
+  const [aadhaar, setAadhaar] = useState(null);
   const [loading, setLoading] = useState(Boolean(autoFetch));
   const [error, setError] = useState(null);
 
@@ -22,25 +16,28 @@ export default function useKYC({ autoFetch = true } = {}) {
     setLoading(true);
     setError(null);
     try {
-      const res = await api.get("/api/kyc/latest");
+      const res = await api.get("/api/kyc/status");
       const data = res?.data ?? null;
       if (!data || !data.ok) {
-        setKyc({ AADHAAR: null, PAN: null });
+        setAadhaar(null);
         setError(data?.error || "Empty response");
         setLoading(false);
         return { ok: false, error: data?.error || "Empty response" };
       }
-      const recs = data.records || {};
-      setKyc({
-        AADHAAR: recs.AADHAAR ?? null,
-        PAN: recs.PAN ?? null,
+      // server returns a snapshot; adapt to UI shape
+      const s = data.status || {};
+      setAadhaar({
+        customer_id: s.customer_id || null,
+        aadhaar_no: s.aadhaar_no || null,
+        status: s.aadhaar_kyc_status || s.kyc_status || null,
+        latest_kyc_id: s.latest_kyc_id || null,
       });
       setLoading(false);
-      return { ok: true, records: recs };
+      return { ok: true, aadhaar: s };
     } catch (err) {
       const msg = err?.response?.data?.error || err?.message || "Failed";
       setError(msg);
-      setKyc({ AADHAAR: null, PAN: null });
+      setAadhaar(null);
       setLoading(false);
       return { ok: false, error: msg };
     }
@@ -51,7 +48,7 @@ export default function useKYC({ autoFetch = true } = {}) {
   }, [autoFetch, fetchLatest]);
 
   return {
-    kyc,
+    aadhaar,
     loading,
     error,
     refresh: fetchLatest,

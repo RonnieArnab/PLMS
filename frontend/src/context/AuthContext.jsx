@@ -134,11 +134,24 @@ export const AuthProvider = ({ children }) => {
     try {
       const res = await api.get(API_ROUTES.customer.me);
       const payload = res.data || {};
-      setAuthLoading(false);
+
+      console.log(payload);
+
       // backend could return { customer } or { user } or plain object
       const customer = payload.customer || payload.user || payload;
+
+      // Update auth.user with the full customer data when available
+      if (customer && customer.id) {
+        setUser((prevUser) => ({
+          ...(prevUser || {}),
+          ...customer,
+        }));
+      }
+
+      setAuthLoading(false);
       return { ok: true, customer };
     } catch (err) {
+      console.error("fetchCustomer error:", err);
       setAuthLoading(false);
       return { ok: false, error: err.response?.data || err.message || err };
     }

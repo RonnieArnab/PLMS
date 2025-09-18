@@ -7,22 +7,20 @@ import { Paper } from "@components/ui/Paper.jsx";
 import { Button } from "@components/ui/Button.jsx";
 import { Text } from "@components/ui/Text.jsx";
 import { Badge } from "@components/ui/Badge.jsx";
-import { ArrowLeft, AlertCircle, CheckCircle, RefreshCw } from "lucide-react";
+import { ArrowLeft, AlertCircle, RefreshCw } from "lucide-react";
 import api from "@api/api";
 import useCustomer from "@features/profile/hooks/useCustomer";
 import useKYC from "@features/profile/hooks/useKyc";
 
 /**
- * KycReviewPage
- * - primary data from GET /api/kyc/review/latest
- * - fallback: use useKYC and customer.latest_kyc_id
+ * KycReviewPage - Aadhaar only
  */
 export default function KycReviewPage() {
   const navigate = useNavigate();
   const { customer, refreshCustomer } = useCustomer();
-  const { kyc, refresh: refreshKyc } = useKYC();
+  const { aadhaar, refresh: refreshKyc } = useKYC();
   const [loading, setLoading] = useState(true);
-  const [record, setRecord] = useState(null); // review record object per schema
+  const [record, setRecord] = useState(null);
   const [error, setError] = useState(null);
   const [requestingManual, setRequestingManual] = useState(false);
 
@@ -31,39 +29,30 @@ export default function KycReviewPage() {
     setError(null);
     setRecord(null);
     try {
-      // primary: dedicated review endpoint
-      try {
-        const resp = await api.get("/api/kyc/review/latest");
-        if (resp?.data) {
-          setRecord(resp.data);
-        } else {
-          throw new Error("No review data");
-        }
-      } catch (ePrimary) {
-        // fallback: try to build consolidated record from per-type kyc
-        if (customer?.latest_kyc_id) {
-          // attempt to fetch that specific record
-          const resp = await api.get(
-            `/api/kyc/records/${customer.latest_kyc_id}`
-          );
-          setRecord(resp.data);
-        } else if (kyc.AADHAAR || kyc.PAN) {
-          // synthesize a review-like summary from useKYC
+      // Prefer fetching the latest KYC record if API offers endpoint for record by id
+      if (customer?.latest_kyc_id) {
+        const resp = await api.get(
+          `/api/kyc/records/${customer.latest_kyc_id}`
+        );
+        setRecord(resp.data || null);
+      } else {
+        // Fallback: synthesize from /status snapshot
+        if (aadhaar) {
           setRecord({
-            id: null,
-            status: "NEEDS_REVIEW",
-            created_at: new Date().toISOString(),
+            id: aadhaar.latest_kyc_id || null,
+            status: aadhaar.status || "NEEDS_REVIEW",
+            created_at: null,
             parsed: {
-              ...(kyc.PAN?.parsed || {}),
-              ...(kyc.AADHAAR?.parsed || {}),
+              aadhaar_last4: aadhaar.aadhaar_no
+                ? String(aadhaar.aadhaar_no).slice(-4)
+                : null,
             },
-            confidence_score:
-              (kyc.PAN?.confidence || 0) + (kyc.AADHAAR?.confidence || 0),
+            confidence_score: null,
             file: null,
-            xml: null,
+            notes: null,
           });
         } else {
-          throw ePrimary;
+          throw new Error("No KYC record found");
         }
       }
     } catch (e) {
@@ -74,20 +63,29 @@ export default function KycReviewPage() {
     } finally {
       setLoading(false);
     }
-  }, [customer, kyc]);
+  }, [customer, aadhaar]);
 
   useEffect(() => {
     fetchLatestReview();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // request manual review (calls backend to notify human reviewer)
   const onRequestManualReview = async () => {
-    if (!record?.id) {
-      // if no record id available, attempt to request review via generic endpoint
-      setRequestingManual(true);
-      try {
-        const res = await api.post("/api/kyc/records/request-review"); // optional backend route
+    setRequestingManual(true);
+    try {
+      // try to request manual review for latest record
+      if (record?.id) {
+        const res = await api.post(
+          `/api/kyc/records/${record.id}/request-review`
+        );
+        if (res?.data?.ok) {
+          await fetchLatestReview();
+          await refreshCustomer?.();
+          await refreshKyc?.();
+        }
+      } else {
+        // generic request
+        const res = await api.post("/api/kyc/records/request-review");
         if (res?.data?.ok) {
           await fetchLatestReview();
           await refreshCustomer?.();
@@ -95,25 +93,6 @@ export default function KycReviewPage() {
         } else {
           setError(res?.data?.error || "Request submitted");
         }
-      } catch (e) {
-        setError(e?.response?.data?.error || e.message || "Request failed");
-      } finally {
-        setRequestingManual(false);
-      }
-      return;
-    }
-
-    setRequestingManual(true);
-    try {
-      const res = await api.post(
-        `/api/kyc/records/${record.id}/request-review`
-      );
-      if (res?.data?.ok) {
-        await fetchLatestReview();
-        await refreshCustomer?.();
-        await refreshKyc?.();
-      } else {
-        setError(res?.data?.error || "Request submitted");
       }
     } catch (e) {
       setError(e?.response?.data?.error || e.message || "Request failed");
@@ -123,7 +102,6 @@ export default function KycReviewPage() {
   };
 
   const goBack = () => navigate("/profile");
-  const reuploadPan = () => navigate("/kyc"); // user can submit PAN from there
   const reuploadAadhaar = () => navigate("/kyc");
 
   return (
@@ -133,7 +111,6 @@ export default function KycReviewPage() {
           variant="outline"
           size="sm"
           onClick={goBack}
-          aria-label="Back to profile"
           className="flex items-center gap-2 my-2">
           <ArrowLeft className="w-4 h-4" />
           Back
@@ -141,11 +118,10 @@ export default function KycReviewPage() {
 
         <Paper className="rounded-2xl p-6">
           <div className="mb-4">
-            <h1 className="text-2xl font-semibold">KYC — Needs Review</h1>
+            <h1 className="text-2xl font-semibold">Aadhaar KYC — Review</h1>
             <Text variant="muted" className="mt-1">
-              One or more of your submitted documents could not be
-              auto-verified. You can re-upload corrected documents, or request a
-              manual review by our team.
+              If automatic verification failed, you can re-upload your Aadhaar
+              or request manual review.
             </Text>
           </div>
 
@@ -162,11 +138,10 @@ export default function KycReviewPage() {
             </div>
           ) : (
             <>
-              {/* record summary */}
               <Card className="p-4 mb-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="text-lg font-semibold">KYC Record</div>
+                    <div className="text-lg font-semibold">Aadhaar Record</div>
                     <div className="text-sm text-muted">
                       Submitted:{" "}
                       {record?.created_at
@@ -175,7 +150,12 @@ export default function KycReviewPage() {
                     </div>
                   </div>
                   <div>
-                    <Badge variant="warning">Needs review</Badge>
+                    <Badge
+                      variant={
+                        record?.status === "APPROVED" ? "success" : "warning"
+                      }>
+                      {record?.status || "NEEDS_REVIEW"}
+                    </Badge>
                   </div>
                 </div>
 
@@ -183,21 +163,13 @@ export default function KycReviewPage() {
                   <div>
                     <div className="text-sm font-medium">Detected fields</div>
                     <div className="text-xs mt-2 space-y-1">
-                      {record?.parsed?.pan ? (
-                        <div>PAN (parsed): {record.parsed.pan}</div>
-                      ) : (
-                        <div>PAN: not found</div>
-                      )}
-                      {record?.parsed?.aadhaar12 ? (
+                      {record?.parsed?.aadhaar_last4 ? (
                         <div>
-                          Aadhaar (last4): ****{" "}
-                          {String(record.parsed.aadhaar12).slice(-4)}
+                          Aadhaar last4: ****{" "}
+                          {String(record.parsed.aadhaar_last4)}
                         </div>
                       ) : (
                         <div>Aadhaar: not found</div>
-                      )}
-                      {record?.parsed?.dob && (
-                        <div>DOB: {record.parsed.dob}</div>
                       )}
                       <div className="text-xs text-muted mt-2">
                         Text sample (truncated):
@@ -227,14 +199,6 @@ export default function KycReviewPage() {
                       <div>
                         Status: <strong>{record?.status}</strong>
                       </div>
-                      {record?.notes && (
-                        <div>
-                          Notes:{" "}
-                          <div className="text-xs text-muted">
-                            {record.notes}
-                          </div>
-                        </div>
-                      )}
                       <div className="mt-2">
                         {record?.file && (
                           <div>
@@ -246,21 +210,7 @@ export default function KycReviewPage() {
                                 window.open(record.file.file_path, "_blank");
                               }}
                               className="text-sm underline">
-                              Open document (requires auth)
-                            </a>
-                          </div>
-                        )}
-                        {record?.xml && record.xml.file_path && (
-                          <div className="mt-2">
-                            <div className="text-xs">XML artifact:</div>
-                            <a
-                              href={record.xml.file_path}
-                              onClick={(e) => {
-                                e.preventDefault();
-                                window.open(record.xml.file_path, "_blank");
-                              }}
-                              className="text-sm underline">
-                              Download XML
+                              Open document
                             </a>
                           </div>
                         )}
@@ -270,11 +220,7 @@ export default function KycReviewPage() {
                 </div>
               </Card>
 
-              {/* actions */}
               <div className="flex gap-3">
-                <Button variant="outline" onClick={reuploadPan}>
-                  Re-upload PAN
-                </Button>
                 <Button variant="outline" onClick={reuploadAadhaar}>
                   Re-upload Aadhaar
                 </Button>

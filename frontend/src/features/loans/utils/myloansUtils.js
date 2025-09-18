@@ -14,9 +14,17 @@ export const calcTotalPayable = (principal, aprPct, months) => {
 };
 
 export function toUiLoan(apiLoan) {
-  const appliedDate = apiLoan.applied_date ? new Date(apiLoan.applied_date) : null;
-  const approvedDate = apiLoan.approved_date ? new Date(apiLoan.approved_date) : null;
-  const disbursementDate = apiLoan.disbursement_date ? new Date(apiLoan.disbursement_date) : null;
+  const appliedDate = apiLoan.applied_date
+    ? new Date(apiLoan.applied_date)
+    : null;
+  const approvedDate = apiLoan.approved_date
+    ? new Date(apiLoan.approved_date)
+    : null;
+  const disbursementDate = apiLoan.disbursement_date
+    ? new Date(apiLoan.disbursement_date)
+    : null;
+
+  console.log("apiLoan", apiLoan);
 
   // Use backend-calculated values if available, otherwise fall back to local calculations
   const principal = Number(apiLoan.approved_amount || apiLoan.loan_amount);
@@ -24,20 +32,21 @@ export function toUiLoan(apiLoan) {
   const months = apiLoan.tenure_months;
 
   // Use backend-calculated EMI if available, otherwise calculate locally
-  const monthlyPayment = apiLoan.monthlyPayment || calcEmi(principal, interestRate, months);
+  const monthlyPayment =
+    apiLoan.monthlyPayment || calcEmi(principal, interestRate, months);
 
   // Calculate total payable amount (principal + interest)
   const totalPayable = calcTotalPayable(principal, interestRate, months);
 
   // Use backend-calculated remaining balance if available, otherwise calculate from total payable
-  const remainingBalance = apiLoan.remainingBalance !== undefined
-    ? Number(apiLoan.remainingBalance)
-    : Math.max(0, totalPayable - (apiLoan.totalRepaid || 0));
+  const remainingBalance =
+    apiLoan.remainingBalance !== undefined
+      ? Number(apiLoan.remainingBalance)
+      : Math.max(0, totalPayable - (apiLoan.totalRepaid || 0));
 
   // Use backend-calculated total repaid if available
-  const totalRepaid = apiLoan.totalRepaid !== undefined
-    ? Number(apiLoan.totalRepaid)
-    : 0;
+  const totalRepaid =
+    apiLoan.totalRepaid !== undefined ? Number(apiLoan.totalRepaid) : 0;
 
   // Use backend-calculated next payment date if available
   let nextPaymentDate = apiLoan.nextPaymentDate;
@@ -55,9 +64,10 @@ export function toUiLoan(apiLoan) {
 
   // Determine completion status based on remaining balance
   // Allow for small rounding differences (less than 1 rupee)
-  const isCompleted = (apiLoan.isCompleted === true) ||
-                     (apiLoan.remainingBalance !== undefined && apiLoan.remainingBalance <= 1) ||
-                     (remainingBalance <= 1);
+  const isCompleted =
+    apiLoan.isCompleted === true ||
+    (apiLoan.remainingBalance !== undefined && apiLoan.remainingBalance <= 1) ||
+    remainingBalance <= 1;
 
   // Use backend-calculated status if available, otherwise determine from application status
   let loanStatus;
@@ -90,8 +100,8 @@ export function toUiLoan(apiLoan) {
     interestRate: interestRate,
     status: loanStatus,
     approvedAmount: principal,
-    approvedDate: approvedDate,
-    disbursementDate: disbursementDate,
+    approvedDate: appliedDate,
+    disbursementDate: appliedDate,
     monthlyPayment: monthlyPayment,
     totalPayable: totalPayable,
     totalRepaid: totalRepaid,

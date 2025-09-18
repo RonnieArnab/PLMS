@@ -119,7 +119,36 @@ export const registerCustomer = async (req, res) => {
       years_experience,
       annual_income,
       address,
+      // additional fields
+      nominee,
+      nominee_contact,
+      date_of_birth,
+      bank_name,
+      account_number,
+      ifsc_code,
+      account_type,
     } = req.body;
+
+    console.log({
+      email,
+      password,
+      phone,
+      full_name,
+      aadhaar_no,
+      pan_no,
+      profession,
+      years_experience,
+      annual_income,
+      address,
+      // additional fields
+      nominee,
+      nominee_contact,
+      date_of_birth,
+      bank_name,
+      account_number,
+      ifsc_code,
+      account_type,
+    });
 
     // Basic validation
     if (!email && !req.user) {
@@ -150,13 +179,24 @@ export const registerCustomer = async (req, res) => {
     if (authUserId) {
       // authenticated flow: ensure user exists
       const userQ =
-        "SELECT user_id, email, role, email_verified, email_verified_at FROM users WHERE user_id = $1 LIMIT 1";
+        "SELECT user_id, email, role, email_verified, email_verified_at, phone_number FROM users WHERE user_id = $1 LIMIT 1";
       const userRes = await client.query(userQ, [authUserId]);
       if (userRes.rows.length === 0) {
         await client.query("ROLLBACK");
         return res.status(404).json({ error: "Authenticated user not found" });
       }
       userId = userRes.rows[0].user_id;
+
+      // optionally update phone / full_name if provided (non-destructive)
+      if (phone || full_name) {
+        await client.query(
+          `UPDATE users
+           SET phone_number = COALESCE($1, phone_number),
+               full_name = COALESCE($2, full_name)
+           WHERE user_id = $3`,
+          [phone || null, full_name || null, userId]
+        );
+      }
     } else {
       // not-authenticated: attempt to lock existing user row to avoid races
       const ue = await client.query(
@@ -181,6 +221,17 @@ export const registerCustomer = async (req, res) => {
         }
         // reuse existing user (no profile yet)
         userId = existingUser.user_id;
+
+        // if phone/full_name provided, update user row
+        if (phone || full_name) {
+          await client.query(
+            `UPDATE users
+             SET phone_number = COALESCE($1, phone_number),
+                 full_name = COALESCE($2, full_name)
+             WHERE user_id = $3`,
+            [phone || null, full_name || null, userId]
+          );
+        }
       } else {
         // 3) create user row
         if (!password) {
@@ -193,12 +244,14 @@ export const registerCustomer = async (req, res) => {
         const passwordHash = await argon2.hash(password, {
           type: argon2.argon2id,
         });
-        const createUserQ = `INSERT INTO users (email, password_hash, role, phone_number)
-                             VALUES ($1,$2,'CUSTOMER',$3) RETURNING user_id, email, role, email_verified, email_verified_at`;
+        const createUserQ = `INSERT INTO users (email, password_hash, role, phone_number, full_name)
+                             VALUES ($1,$2,'CUSTOMER',$3,$4)
+                             RETURNING user_id, email, role, email_verified, email_verified_at`;
         const createRes = await client.query(createUserQ, [
           email,
           passwordHash,
           phone || null,
+          full_name || null,
         ]);
         createdUser = createRes.rows[0];
         userId = createdUser.user_id;
@@ -217,11 +270,11 @@ export const registerCustomer = async (req, res) => {
       });
     }
 
-    // Insert customerprofile first
+    // Insert customerprofile first (persist nominee/dob etc)
     const custInsertQ = `INSERT INTO customerprofile
-      (user_id, full_name, aadhaar_no, pan_no, profession, years_experience, annual_income, address)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-      RETURNING customer_id, user_id, full_name, aadhaar_no, pan_no, profession, years_experience, annual_income, kyc_status, address, created_at`;
+      (user_id, full_name, aadhaar_no, pan_no, profession, years_experience, annual_income, address, nominee, nominee_contact, date_of_birth, kyc_status, created_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, 'PENDING', NOW())
+      RETURNING customer_id, user_id, full_name, aadhaar_no, pan_no, profession, years_experience, annual_income, kyc_status, address, nominee, nominee_contact, date_of_birth, account_id, created_at`;
     const custRes = await client.query(custInsertQ, [
       userId,
       full_name,
@@ -231,16 +284,18 @@ export const registerCustomer = async (req, res) => {
       years_experience ?? null,
       annual_income ?? null,
       address || null,
+      nominee || null,
+      nominee_contact || null,
+      date_of_birth || null,
     ]);
     const createdProfile = custRes.rows[0];
 
     // Handle bank account creation if bank details provided
     let accountIdToUse = null;
-    const { bank_name, account_number, ifsc_code, account_type } = req.body;
 
     if (bank_name && account_number) {
       const accCheck = await client.query(
-        "SELECT account_id FROM bank_accounts WHERE account_number = $1",
+        "SELECT account_id FROM bank_accounts WHERE account_number = $1 LIMIT 1",
         [account_number]
       );
       if (accCheck.rows.length) {
@@ -250,7 +305,7 @@ export const registerCustomer = async (req, res) => {
           INSERT INTO bank_accounts
             (customer_id, bank_name, branch_name, ifsc_code, account_number, account_type, is_primary, created_at)
           VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
-          RETURNING account_id
+          RETURNING account_id, bank_name, account_number, ifsc_code, account_type, is_primary
         `;
         const accValues = [
           createdProfile.customer_id,
@@ -291,6 +346,9 @@ export const registerCustomer = async (req, res) => {
       });
     }
 
+    // Commit transaction
+    await client.query("COMMIT");
+
     // build user response including email_verified
     let userResponse;
     if (createdUser) {
@@ -300,11 +358,13 @@ export const registerCustomer = async (req, res) => {
         role: createdUser.role,
         email_verified: createdUser.email_verified || false,
         email_verified_at: createdUser.email_verified_at || null,
+        phone: phone || null,
+        full_name: full_name || null,
       };
     } else {
       try {
         const uq = await pool.query(
-          "SELECT user_id, email, role, email_verified, email_verified_at FROM users WHERE user_id = $1",
+          "SELECT user_id, email, role, email_verified, email_verified_at, phone_number, full_name FROM users WHERE user_id = $1",
           [userId]
         );
         const urow = uq.rows[0];
@@ -314,16 +374,38 @@ export const registerCustomer = async (req, res) => {
           role: urow.role,
           email_verified: urow.email_verified || false,
           email_verified_at: urow.email_verified_at || null,
+          phone: urow.phone_number || null,
+          full_name: urow.full_name || null,
         };
       } catch (e) {
-        userResponse = { id: userId };
+        userResponse = {
+          id: userId,
+          phone: phone || null,
+          full_name: full_name || null,
+        };
+      }
+    }
+
+    // Compose final customer object to return (include bank fields if available)
+    const customerResponse = {
+      ...createdProfile,
+      bank: null,
+    };
+
+    if (accountIdToUse) {
+      // fetch the bank row for the account id (outside transaction is fine since we've committed)
+      const bankQ =
+        "SELECT account_id, bank_name, account_number, ifsc_code, account_type, is_primary FROM bank_accounts WHERE account_id = $1 LIMIT 1";
+      const bres = await pool.query(bankQ, [accountIdToUse]);
+      if (bres.rows.length) {
+        customerResponse.bank = bres.rows[0];
       }
     }
 
     return res.status(201).json({
       message: "Customer registered. Please verify your email to continue.",
       user: userResponse,
-      customer: createdProfile,
+      customer: customerResponse,
       accessToken, // may be null if reusing existing user (frontend should call restoreSession)
     });
   } catch (err) {

@@ -1,453 +1,369 @@
-// src/features/profile/pages/CustomerDetailsPage.jsx
-import React, { useEffect, useState, useRef } from "react";
-import MotionFadeIn from "@components/ui/MotionFadeIn.jsx";
-import { Paper } from "@components/ui/Paper.jsx";
-import { Input } from "@components/ui/Input.jsx";
-import { Button } from "@components/ui/Button.jsx";
-import { Text } from "@components/ui/Text.jsx";
+// src/features/profile/pages/ProfilePage.jsx
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { DashboardLayout } from "@components/layout/DashboardLayout";
 import { useAuth } from "@context/AuthContext";
-import { useNavigate } from "react-router-dom";
+import useKYC from "@features/profile/hooks/useKyc";
+import ProfileHeader from "@features/profile/components/ProfileHeader";
+import ProfileDetails from "@features/profile/components/ProfileDetails";
+import KycCard from "@features/profile/components/KycCard";
+import { Text } from "@components/ui/Text";
+import { useNavigate, useLocation } from "react-router-dom";
 
-/**
- * CustomerDetailsPage
- * - Vertical single-column KYC form with concise helper text under each input.
- * - Prefills customer data when available.
- * - Save -> updateCustomer (preferred) or registerCustomer fallback.
- * - Skip removed: the form is mandatory and user must complete it.
- */
-
-export default function CustomerDetailsPage() {
-  const {
-    fetchCustomer,
-    updateCustomer,
-    registerCustomer,
-    restoreSession,
-    user,
-  } = useAuth() ?? {};
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [errors, setErrors] = useState({});
-  const [success, setSuccess] = useState(null);
-
-  const [form, setForm] = useState({
-    full_name: "",
-    email: "",
-    phone: "",
-    pan: "",
-    aadhaar: "",
-    profession: "",
-    years_experience: "",
-    annual_income: "",
-    address: "",
-    bank_name: "",
-    account_no: "",
-    ifsc: "",
-  });
+export default function ProfilePage() {
+  const { user: authUser, fetchCustomer, updateCustomer } = useAuth() ?? {};
+  const { aadhaar, loading: kycLoading } = useKYC();
+  const navigate = useNavigate();
+  const location = useLocation();
 
   const isMounted = useRef(true);
   useEffect(() => {
     isMounted.current = true;
-    return () => (isMounted.current = false);
+    return () => {
+      isMounted.current = false;
+    };
   }, []);
 
-  const navigate = useNavigate();
+  const lastFetchedRef = useRef(0);
+  const [localCustomer, setLocalCustomer] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [avatarPreview, setAvatarPreview] = useState(null);
+  const [result, setResult] = useState(null);
 
-  useEffect(() => {
-    async function load() {
-      setLoading(true);
-      try {
-        let customer = null;
-        if (typeof fetchCustomer === "function") {
-          const r = await fetchCustomer();
-          if (r?.ok && r.customer) {
-            customer = r.customer;
-          }
-        }
-        if (!customer && user) {
-          customer = user.customer || user;
-        }
-        if (customer) {
-          setForm((s) => ({
-            ...s,
-            full_name: customer.full_name || customer.name || s.full_name,
-            email: customer.email || user?.email || s.email,
-            phone:
-              customer.phone_number || customer.phone || user?.phone || s.phone,
-            pan: customer.pan_no || customer.pan || s.pan,
-            aadhaar: customer.aadhaar_no || s.aadhaar,
-            profession: customer.profession || s.profession,
-            years_experience:
-              customer.years_experience ?? s.years_experience ?? "",
-            annual_income: customer.annual_income ?? s.annual_income ?? "",
-            address: customer.address || s.address,
-            bank_name: customer.bank_name || s.bank_name,
-            account_no:
-              customer.account_number || customer.account_no || s.account_no,
-            ifsc: customer.ifsc_code || customer.ifsc || s.ifsc,
-          }));
+  const [formData, setFormData] = useState({
+    name: "",
+    email: "",
+    phone: "",
+    address: "",
+    bankName: "",
+    accountMasked: "",
+    accountNumber: "",
+    accountType: "",
+    ifsc: "",
+    nominee: "",
+    nomineeContact: "",
+    employment: "",
+    monthlyIncome: "",
+    aadhaar: "",
+    dateOfBirth: "",
+    age: "",
+  });
+
+  // load customer from context endpoint (or fallback to authUser)
+  const loadCustomer = async (force = false) => {
+    // prevent too-frequent fetches unless forced
+    const now = Date.now();
+    if (!force && now - lastFetchedRef.current < 3000) return;
+    lastFetchedRef.current = now;
+
+    setLoading(true);
+    try {
+      if (typeof fetchCustomer === "function") {
+        const res = await fetchCustomer();
+        if (!isMounted.current) return;
+        if (res?.ok && res.customer) {
+          setLocalCustomer(res.customer);
         } else {
-          setForm((s) => ({
-            ...s,
-            email: user?.email || s.email,
-            full_name: user?.full_name || s.full_name,
-          }));
+          setLocalCustomer(authUser ?? null);
         }
-      } catch (e) {
-        // ignore
-      } finally {
-        if (isMounted.current) setLoading(false);
+      } else {
+        if (!isMounted.current) return;
+        setLocalCustomer(authUser ?? null);
       }
+    } catch (err) {
+      if (!isMounted.current) return;
+      setLocalCustomer(authUser ?? null);
+    } finally {
+      if (isMounted.current) setLoading(false);
     }
-    load();
+  };
+
+  // initial load
+  useEffect(() => {
+    loadCustomer(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const safeSet = (setter, value) => {
-    if (!isMounted.current) return;
-    setter(value);
+  // refetch when route becomes active/changes (so navigating back triggers reload)
+  useEffect(() => {
+    // only trigger when path is profile (or nested)
+    if (location.pathname && location.pathname.startsWith("/profile")) {
+      loadCustomer(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key, location.pathname]);
+
+  // refetch on window focus / visibilitychange (if customer might be stale)
+  useEffect(() => {
+    const onFocus = () => {
+      loadCustomer(false);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") loadCustomer(false);
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // populate form data whenever the effective source changes
+  useEffect(() => {
+    const source = localCustomer ?? authUser ?? {};
+    const bank = (localCustomer &&
+      (localCustomer.bank ?? {
+        bank_name: localCustomer.bank_name,
+        account_number: localCustomer.account_number,
+        ifsc_code: localCustomer.ifsc_code,
+        account_type: localCustomer.account_type,
+        is_primary: localCustomer.is_primary,
+      })) || { account_number: "" };
+
+    const accountNumber = bank.account_number || "";
+
+    setFormData({
+      name: source.full_name || source.name || "",
+      email: authUser?.email || "",
+      phone: authUser?.phone || source.phone || "",
+      address: source.address || "",
+      bankName: bank.bank_name || "",
+      accountMasked:
+        accountNumber && accountNumber.length >= 4
+          ? "XXXXXX" + accountNumber.slice(-4)
+          : accountNumber || "",
+      accountNumber,
+      accountType: bank.account_type || "",
+      ifsc: bank.ifsc_code || "",
+      nominee: source.nominee || "",
+      nomineeContact: source.nominee_contact || "",
+      employment: source.profession || "",
+      monthlyIncome: source.annual_income
+        ? (Number(source.annual_income) / 12).toFixed(2)
+        : "",
+      aadhaar: source.aadhaar_no || "",
+      dateOfBirth: source.date_of_birth || "",
+      age: source.age ?? "",
+    });
+  }, [localCustomer, authUser]);
+
+  const initials = useMemo(() => {
+    const source = formData.name || formData.email || "U";
+    return source
+      .split(" ")
+      .map((part) => (part ? part[0] : ""))
+      .join("")
+      .slice(0, 2)
+      .toUpperCase();
+  }, [formData]);
+
+  const handleAvatar = (file) => {
+    if (!file) {
+      setAvatarPreview(null);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setAvatarPreview(reader.result);
+    reader.readAsDataURL(file);
   };
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    safeSet(setForm, (s) => ({ ...s, [name]: value }));
-    if (errors[name]) safeSet(setErrors, (o) => ({ ...o, [name]: "" }));
-    if (success) safeSet(setSuccess, null);
+    setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  const validate = () => {
-    const errs = {};
-    // presence checks for mandatory fields
-    const required = [
-      "full_name",
-      "phone",
-      "pan",
-      "aadhaar",
-      "profession",
-      "years_experience",
-      "annual_income",
-      "address",
-      "bank_name",
-      "account_no",
-      "ifsc",
-    ];
-    required.forEach((k) => {
-      if (
-        form[k] === undefined ||
-        form[k] === null ||
-        String(form[k]).trim() === ""
-      ) {
-        errs[k] = "This field is required";
-      }
-    });
-
-    if (form.aadhaar && !/^\d{12}$/.test(form.aadhaar))
-      errs.aadhaar = "Aadhaar must be 12 digits";
-    if (form.pan && !/^[A-Z]{5}\d{4}[A-Z]$/i.test(form.pan))
-      errs.pan = "PAN should be 10 chars (ABCDE1234F)";
-    if (form.ifsc && form.ifsc.length < 6) errs.ifsc = "IFSC looks short";
-    if (form.account_no && !/^[\d-]{6,24}$/.test(form.account_no))
-      errs.account_no = "Account number looks invalid";
-    if (
-      form.years_experience &&
-      (isNaN(Number(form.years_experience)) ||
-        Number(form.years_experience) < 0)
-    )
-      errs.years_experience = "Invalid value";
-    if (
-      form.annual_income &&
-      (isNaN(Number(form.annual_income)) || Number(form.annual_income) < 0)
-    )
-      errs.annual_income = "Invalid value";
-    return errs;
-  };
-
-  const handleSubmit = async (e) => {
-    e?.preventDefault?.();
-    safeSet(setErrors, {});
-    safeSet(setSuccess, null);
-
-    const v = validate();
-    if (Object.keys(v).length) return safeSet(setErrors, v);
-
+  const handleSave = async () => {
     setSaving(true);
-
-    const payload = {
-      full_name: form.full_name,
-      email: form.email,
-      phone: form.phone,
-      aadhaar_no: form.aadhaar || null,
-      pan_no: form.pan || null,
-      profession: form.profession || null,
-      years_experience: form.years_experience
-        ? Number(form.years_experience)
-        : null,
-      annual_income: form.annual_income ? Number(form.annual_income) : null,
-      address: form.address || null,
-      bank_name: form.bank_name || null,
-      account_number: form.account_no || null,
-      ifsc_code: form.ifsc || null,
-    };
-
+    setResult(null);
     try {
-      let res;
-      if (typeof updateCustomer === "function") {
-        res = await updateCustomer(payload);
-      } else if (typeof registerCustomer === "function") {
-        res = await registerCustomer(payload);
-      } else {
-        throw new Error("No endpoint available to update customer");
-      }
+      if (typeof updateCustomer !== "function")
+        throw new Error("Update function not available");
 
-      if (!res?.ok) {
-        const general = res?.error?.message || res?.error || "Save failed";
-        safeSet(setErrors, { general });
+      const updateData = {
+        full_name: formData.name || undefined,
+        profession: formData.employment || undefined,
+        annual_income:
+          formData.monthlyIncome !== ""
+            ? Number(formData.monthlyIncome) * 12
+            : undefined,
+        address: formData.address || undefined,
+        nominee: formData.nominee || undefined,
+        nominee_contact: formData.nomineeContact || undefined,
+        date_of_birth: formData.dateOfBirth || undefined,
+        phone: formData.phone || undefined,
+        bank_name: formData.bankName || undefined,
+        account_number: formData.accountNumber || undefined,
+        account_type: formData.accountType || undefined,
+        ifsc_code: formData.ifsc || undefined,
+      };
+
+      // remove empties
+      Object.keys(updateData).forEach((k) => {
+        if (
+          updateData[k] === "" ||
+          updateData[k] === null ||
+          updateData[k] === undefined
+        ) {
+          delete updateData[k];
+        }
+      });
+
+      const response = await updateCustomer(updateData);
+
+      if (response?.ok) {
         setSaving(false);
-        return;
+        setEditing(false);
+        setResult({ ok: true, message: "Profile updated successfully!" });
+        setTimeout(() => setResult(null), 2500);
+        await loadCustomer(true); // force reload to pick up full customer
+      } else {
+        const message = response?.error || "Update failed";
+        throw new Error(
+          typeof message === "string" ? message : JSON.stringify(message)
+        );
       }
-
-      try {
-        await restoreSession();
-      } catch {
-        // ignore
-      }
-
-      try {
-        localStorage.removeItem("kyc_pending");
-      } catch {}
-
-      safeSet(
-        setSuccess,
-        "Customer details saved. Redirecting to dashboard..."
-      );
-      setTimeout(() => navigate("/dashboard"), 900);
-    } catch (err) {
-      safeSet(setErrors, { general: err?.message || "Something went wrong" });
-    } finally {
+    } catch (error) {
       setSaving(false);
+      setResult({ ok: false, message: error.message || "Save failed." });
+      setTimeout(() => setResult(null), 2500);
     }
   };
 
+  const handleApprove = () => {
+    if (!window.confirm("Approve changes for this profile?")) return;
+    window.alert("Profile approved (simulated).");
+  };
+
+  const handleExport = () => {
+    const blob = new Blob([JSON.stringify(formData, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `profile_export_${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleVCard = () => {
+    const vcard = [
+      "BEGIN:VCARD",
+      "VERSION:3.0",
+      `FN:${formData.name}`,
+      `EMAIL:${formData.email}`,
+      `TEL:${formData.phone}`,
+      `ADR:${(formData.address || "").replace(/\n/g, ";")}`,
+      "END:VCARD",
+    ].join("\n");
+    const blob = new Blob([vcard], { type: "text/vcard" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `contact_${formData.name || "profile"}.vcf`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDelete = () => {
+    if (
+      !window.confirm(
+        "Are you sure you want to delete your account? This is irreversible."
+      )
+    )
+      return;
+    window.alert("Account deletion simulated.");
+  };
+
   return (
-    <MotionFadeIn>
-      <div className="max-w-xl mx-auto p-4">
-        <Paper className="rounded-2xl p-6">
-          <div className="mb-4">
-            <h1 className="text-2xl font-extrabold">
-              Customer details &amp; KYC
-            </h1>
-            <Text variant="muted" className="mt-1">
-              Provide the identity & bank details needed for faster approvals
-              and disbursals. These fields are required to continue.
-            </Text>
+    <DashboardLayout>
+      <div className="max-w-6xl mx-auto p-6 space-y-8">
+        <ProfileHeader
+          loading={loading}
+          initials={initials}
+          preview={avatarPreview}
+          name={formData.name}
+          email={formData.email}
+          premium
+          onAvatar={handleAvatar}
+          onEditToggle={() => setEditing((e) => !e)}
+          editing={editing}
+          disabled={loading || saving}
+        />
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="lg:col-span-2">
+            <ProfileDetails
+              loading={loading}
+              editing={editing}
+              formData={formData}
+              onChange={handleChange}
+              onSave={() => editing && handleSave()}
+              onApprove={handleApprove}
+              saving={saving}
+            />
           </div>
 
-          {errors.general && (
-            <div className="p-3 rounded my-3 bg-red-50 text-red-700 text-sm border border-red-100">
-              {errors.general}
-            </div>
-          )}
-          {success && (
-            <div className="p-3 rounded my-3 bg-green-50 text-emerald-700 text-sm border border-green-100">
-              {success}
-            </div>
-          )}
+          <div className="space-y-6">
+            <KycCard
+              loading={kycLoading}
+              kyc={{
+                aadhaar_status: aadhaar?.status,
+                aadhaar,
+              }}
+              onUpdate={() => navigate("/profile/kyc")}
+            />
 
-          <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-            {/* Full name */}
             <div>
-              <Input
-                name="full_name"
-                label="Full name"
-                value={form.full_name}
-                onChange={handleChange}
-                disabled={loading}
-                required
-              />
-              <div className="text-xs text-slate-500 mt-1">
-                Legal name as on Aadhaar/PAN.
+              <Text variant="muted" className="mb-2">
+                IDs
+              </Text>
+
+              <div className="p-4 rounded-lg bg-base-200/50 mb-4">
+                <div className="text-sm text-base-content/60">Aadhaar</div>
+                <div className="font-medium">{formData.aadhaar || "—"}</div>
               </div>
             </div>
 
-            {/* Email (readonly) */}
-            <div>
-              <Input
-                name="email"
-                label="Email"
-                value={form.email}
-                onChange={handleChange}
-                disabled
-              />
-              <div className="text-xs text-slate-500 mt-1">
-                Account email (verified) — cannot be changed here.
-              </div>
+            <div className="space-y-2">
+              <button
+                onClick={handleExport}
+                className="w-full rounded px-4 py-2 border"
+                disabled={loading || saving}>
+                Export JSON
+              </button>
+              <button
+                onClick={handleVCard}
+                className="w-full rounded px-4 py-2 border"
+                disabled={loading || saving}>
+                Download vCard
+              </button>
+              <button
+                onClick={handleDelete}
+                className="w-full rounded px-4 py-2 border text-red-600"
+                disabled={loading || saving}>
+                Delete Account
+              </button>
             </div>
-
-            {/* Phone */}
-            <div>
-              <Input
-                name="phone"
-                label="Phone"
-                value={form.phone}
-                onChange={handleChange}
-                required
-              />
-              <div className="text-xs text-slate-500 mt-1">
-                Mobile for OTPs. Add country code if outside India.
-              </div>
-            </div>
-
-            {/* Profession */}
-            <div>
-              <Input
-                name="profession"
-                label="Profession"
-                value={form.profession}
-                onChange={handleChange}
-                required
-              />
-              <div className="text-xs text-slate-500 mt-1">
-                E.g. Salaried, Self-employed, Student.
-              </div>
-            </div>
-
-            {/* PAN */}
-            <div>
-              <Input
-                name="pan"
-                label="PAN"
-                placeholder="ABCDE1234F"
-                value={form.pan}
-                onChange={handleChange}
-                error={errors.pan}
-                required
-              />
-              <div className="text-xs text-slate-500 mt-1">
-                10 chars (example: <code>ABCDE1234F</code>) — required for
-                compliance.
-              </div>
-            </div>
-
-            {/* Aadhaar */}
-            <div>
-              <Input
-                name="aadhaar"
-                label="Aadhaar"
-                placeholder="123412341234"
-                value={form.aadhaar}
-                onChange={handleChange}
-                error={errors.aadhaar}
-                required
-              />
-              <div className="text-xs text-slate-500 mt-1">
-                12 digits — numbers only.
-              </div>
-            </div>
-
-            {/* Years experience */}
-            <div>
-              <Input
-                name="years_experience"
-                label="Years experience"
-                value={form.years_experience}
-                onChange={handleChange}
-                error={errors.years_experience}
-                required
-              />
-              <div className="text-xs text-slate-500 mt-1">
-                Total years in current/previous roles (numeric).
-              </div>
-            </div>
-
-            {/* Annual income */}
-            <div>
-              <Input
-                name="annual_income"
-                label="Annual income (INR)"
-                value={form.annual_income}
-                onChange={handleChange}
-                error={errors.annual_income}
-                required
-              />
-              <div className="text-xs text-slate-500 mt-1">
-                Approx gross annual income (numeric).
-              </div>
-            </div>
-
-            {/* Address */}
-            <div>
-              <Input
-                name="address"
-                label="Address"
-                value={form.address}
-                onChange={handleChange}
-                required
-              />
-              <div className="text-xs text-slate-500 mt-1">
-                Current residential address — include city & PIN.
-              </div>
-            </div>
-
-            {/* Bank name */}
-            <div>
-              <Input
-                name="bank_name"
-                label="Bank name"
-                value={form.bank_name}
-                onChange={handleChange}
-                required
-              />
-              <div className="text-xs text-slate-500 mt-1">
-                Bank for disbursal.
-              </div>
-            </div>
-
-            {/* Account number */}
-            <div>
-              <Input
-                name="account_no"
-                label="Account number"
-                value={form.account_no}
-                onChange={handleChange}
-                error={errors.account_no}
-                required
-              />
-              <div className="text-xs text-slate-500 mt-1">
-                Full account number — used only for disbursal.
-              </div>
-            </div>
-
-            {/* IFSC */}
-            <div>
-              <Input
-                name="ifsc"
-                label="IFSC"
-                value={form.ifsc}
-                onChange={handleChange}
-                error={errors.ifsc}
-                required
-              />
-              <div className="text-xs text-slate-500 mt-1">
-                11-character IFSC (example: SBIN0000001).
-              </div>
-            </div>
-
-            <div className="flex gap-3 pt-2">
-              <div className="flex-1" />
-
-              <Button
-                type="submit"
-                variant="gradient"
-                disabled={saving}
-                style={{
-                  backgroundImage: "linear-gradient(90deg,#84cc16,#22c55e)",
-                  color: "white",
-                }}>
-                {saving ? "Saving..." : "Save & Continue"}
-              </Button>
-            </div>
-          </form>
-        </Paper>
+          </div>
+        </div>
       </div>
-    </MotionFadeIn>
+
+      {result && (
+        <div
+          className={`fixed bottom-6 right-8 z-50 px-6 py-3 rounded-lg shadow-lg ${
+            result.ok ? "bg-green-700 text-white" : "bg-red-600 text-white"
+          }`}>
+          {result.message}
+        </div>
+      )}
+    </DashboardLayout>
   );
 }

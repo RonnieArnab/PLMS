@@ -1,41 +1,46 @@
-import React, { useEffect, useMemo, useState } from "react";
+// src/features/profile/pages/ProfilePage.jsx
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { DashboardLayout } from "@components/layout/DashboardLayout";
-import { useAuth } from "@context/AuthContext";
 import useCustomer from "@features/profile/hooks/useCustomer";
 import useKYC from "@features/profile/hooks/useKyc";
 import ProfileHeader from "@features/profile/components/ProfileHeader";
 import ProfileDetails from "@features/profile/components/ProfileDetails";
-import SecurityCard from "@features/profile/components/SecurityCard";
 import KycCard from "@features/profile/components/KycCard";
-import QuickActions from "@features/profile/components/QuickActions";
 import { Text } from "@components/ui/Text";
-import { useNavigate } from "react-router-dom";
-
-/**
- * Top-level Profile page assembled from smaller components.
- * - Includes loading, form editing + save simulation.
- * - Approval actions & export/download functionality.
- */
+import { useNavigate, useLocation } from "react-router-dom";
 
 export default function ProfilePage() {
-  const auth = useAuth();
-  const { user: authUser, updateCustomer } = auth || {};
-  const { customer, loading: customerLoading, refreshCustomer } = useCustomer();
   const {
-    kyc,
-    loading: kycLoading,
-    // error: kycError,
-    // refresh: refreshKyc,
-  } = useKYC();
-  const [loading, setLoading] = useState(true);
+    customer,
+    loading: hookLoading,
+    refreshCustomer,
+    updateCustomer,
+  } = useCustomer();
+  const { aadhaar, loading: kycLoading } = useKYC();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const isMounted = useRef(true);
+  useEffect(() => {
+    isMounted.current = true;
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
+
+  // local UI state
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [avatarPreview, setAvatarPreview] = useState(null);
   const [result, setResult] = useState(null);
 
-  const navigate = useNavigate();
+  // local loading which won't get permanently stuck
+  const [localLoading, setLocalLoading] = useState(true);
+  const [hasInitialized, setHasInitialized] = useState(false);
+  const fallbackTimerRef = useRef(null);
+  const initTimeoutRef = useRef(null);
 
-  // Form data with comprehensive fields
+  // form data
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -43,58 +48,205 @@ export default function ProfilePage() {
     address: "",
     bankName: "",
     accountMasked: "",
+    accountNumber: "",
+    accountType: "",
     ifsc: "",
     nominee: "",
     nomineeContact: "",
     employment: "",
     monthlyIncome: "",
-    pan: "",
     aadhaar: "",
     dateOfBirth: "",
     age: "",
   });
 
-  // Populate form from user and customer data
-  useEffect(() => {
-    if (!customerLoading && customer) {
-      const mapped = {
-        name: customer.full_name || authUser?.name || "",
-        email: authUser?.email || "",
-        phone: authUser?.phone || customer.phone || "",
-        address: customer.address || "",
-        bankName: customer.bank_name || "",
-        accountMasked: customer.account_number
-          ? "XXXXXX" + customer.account_number.slice(-4)
-          : "",
-        ifsc: customer.ifsc_code || "",
-        nominee: customer.nominee || "",
-        nomineeContact: customer.nominee_contact || "",
-        employment: customer.profession || "",
-        monthlyIncome: customer.annual_income
-          ? (customer.annual_income / 12).toFixed(2)
-          : "",
-        pan: customer.pan_no || "",
-        aadhaar: customer.aadhaar_no || "",
-        dateOfBirth: customer.date_of_birth || "",
-        age: customer.age || "",
-      };
-      setFormData(mapped);
-      setLoading(false);
-    }
-  }, [customer, customerLoading, authUser]);
+  // helper to start a load and setup fallback timer
+  const beginLoading = (timeoutMs = 3000) => {
+    if (!isMounted.current) return;
+    setLocalLoading(true);
+    if (fallbackTimerRef.current) clearTimeout(fallbackTimerRef.current);
+    fallbackTimerRef.current = setTimeout(() => {
+      if (isMounted.current) {
+        console.warn(
+          "ProfilePage: Loading timeout, clearing local loading state"
+        );
+        setLocalLoading(false);
+      }
+      fallbackTimerRef.current = null;
+    }, timeoutMs);
+  };
 
-  // Initials for avatar fallback
+  const clearFallbackTimer = () => {
+    if (fallbackTimerRef.current) {
+      clearTimeout(fallbackTimerRef.current);
+      fallbackTimerRef.current = null;
+    }
+  };
+
+  const clearInitTimeout = () => {
+    if (initTimeoutRef.current) {
+      clearTimeout(initTimeoutRef.current);
+      initTimeoutRef.current = null;
+    }
+  };
+
+  // Initial load and page reload handling
+  useEffect(() => {
+    if (hasInitialized) return;
+
+    setHasInitialized(true);
+
+    // Set up initialization timeout to prevent permanent loading
+    initTimeoutRef.current = setTimeout(() => {
+      if (isMounted.current && !customer) {
+        console.warn(
+          "ProfilePage: Initialization timeout, clearing loading state"
+        );
+        setLocalLoading(false);
+        clearFallbackTimer();
+      }
+    }, 8000); // 8 second timeout for initialization
+
+    // If we already have customer data, don't show loading
+    if (customer) {
+      setLocalLoading(false);
+      clearFallbackTimer();
+      clearInitTimeout();
+      return;
+    }
+
+    // Start loading and attempt to fetch
+    beginLoading(3000);
+    refreshCustomer(true)
+      .catch((err) => {
+        console.error("ProfilePage: Initial fetch failed:", err);
+      })
+      .finally(() => {
+        if (!isMounted.current) return;
+        clearInitTimeout();
+        // Clear loading if we have data or hook is no longer loading
+        if (customer || !hookLoading) {
+          setLocalLoading(false);
+          clearFallbackTimer();
+        }
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Monitor hook loading state changes
+  useEffect(() => {
+    if (!isMounted.current || !hasInitialized) return;
+
+    if (!hookLoading || customer) {
+      setLocalLoading(false);
+      clearFallbackTimer();
+    } else if (hookLoading && !customer) {
+      // Hook is loading and we don't have customer data
+      beginLoading(3000);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hookLoading, customer, hasInitialized]);
+
+  // Refresh when route becomes active (navigating back)
+  useEffect(() => {
+    if (!hasInitialized) return;
+
+    if (location.pathname && location.pathname.startsWith("/profile")) {
+      // Force refresh on route activation
+      beginLoading(2000);
+      refreshCustomer(true)
+        .catch((err) => {
+          console.error("ProfilePage: Route refresh failed:", err);
+        })
+        .finally(() => {
+          if (!isMounted.current) return;
+          setLocalLoading(false);
+          clearFallbackTimer();
+        });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key, location.pathname, hasInitialized]);
+
+  // refresh on window focus / visibility (non-forced, rate-limited inside hook)
+  useEffect(() => {
+    const onFocus = () => {
+      beginLoading(1500);
+      refreshCustomer(false)
+        .catch(() => {})
+        .finally(() => {
+          if (!isMounted.current) return;
+          setLocalLoading(false);
+          clearFallbackTimer();
+        });
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") onFocus();
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // populate form whenever customer changes
+  useEffect(() => {
+    const source = customer ?? {};
+    const bank = source.bank ?? {
+      bank_name: source.bank_name,
+      account_number: source.account_number,
+      ifsc_code: source.ifsc_code,
+      account_type: source.account_type,
+      is_primary: source.is_primary,
+    };
+
+    const accountNumber = bank?.account_number ?? "";
+
+    setFormData({
+      name: source.full_name || source.name || "",
+      email: source.email || "",
+      phone: source.phone || source.phone_number || "",
+      address: source.address || "",
+      bankName: bank?.bank_name || "",
+      accountMasked:
+        accountNumber && accountNumber.length >= 4
+          ? "XXXXXX" + accountNumber.slice(-4)
+          : accountNumber || "",
+      accountNumber,
+      accountType: bank?.account_type || "",
+      ifsc: bank?.ifsc_code || "",
+      nominee: source.nominee || "",
+      nomineeContact: source.nominee_contact || "",
+      employment: source.profession || "",
+      monthlyIncome: source.annual_income
+        ? (Number(source.annual_income) / 12).toFixed(2)
+        : "",
+      aadhaar: source.aadhaar_no || "",
+      dateOfBirth: source.date_of_birth || "",
+      age: source.age ?? "",
+    });
+  }, [customer]);
+
+  // cleanup any timers on unmount
+  useEffect(() => {
+    return () => {
+      clearFallbackTimer();
+      clearInitTimeout();
+    };
+  }, []);
+
   const initials = useMemo(() => {
     const source = formData.name || formData.email || "U";
     return source
       .split(" ")
-      .map((part) => part[0])
+      .map((part) => (part ? part[0] : ""))
       .join("")
       .slice(0, 2)
       .toUpperCase();
   }, [formData]);
 
-  // Avatar file handler
   const handleAvatar = (file) => {
     if (!file) {
       setAvatarPreview(null);
@@ -105,59 +257,65 @@ export default function ProfilePage() {
     reader.readAsDataURL(file);
   };
 
-  // Form field change handler
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
 
-  // Save profile data using real API call
   const handleSave = async () => {
     setSaving(true);
     setResult(null);
     try {
-      if (!updateCustomer) {
+      if (typeof updateCustomer !== "function")
         throw new Error("Update function not available");
-      }
 
-      // Prepare data for API
       const updateData = {
-        full_name: formData.name,
-        profession: formData.employment,
-        annual_income: formData.monthlyIncome
-          ? parseFloat(formData.monthlyIncome) * 12
-          : null,
-        address: formData.address,
-        nominee: formData.nominee,
-        nominee_contact: formData.nomineeContact,
-        date_of_birth: formData.dateOfBirth,
+        full_name: formData.name || undefined,
+        profession: formData.employment || undefined,
+        annual_income:
+          formData.monthlyIncome !== ""
+            ? Number(formData.monthlyIncome) * 12
+            : undefined,
+        address: formData.address || undefined,
+        nominee: formData.nominee || undefined,
+        nominee_contact: formData.nomineeContact || undefined,
+        date_of_birth: formData.dateOfBirth || undefined,
+        phone: formData.phone || undefined,
+        bank_name: formData.bankName || undefined,
+        account_number: formData.accountNumber || undefined,
+        account_type: formData.accountType || undefined,
+        ifsc_code: formData.ifsc || undefined,
       };
 
-      // Remove empty fields
-      Object.keys(updateData).forEach((key) => {
+      Object.keys(updateData).forEach((k) => {
         if (
-          updateData[key] === "" ||
-          updateData[key] === null ||
-          updateData[key] === undefined
+          updateData[k] === "" ||
+          updateData[k] === null ||
+          updateData[k] === undefined
         ) {
-          delete updateData[key];
+          delete updateData[k];
         }
       });
 
       const response = await updateCustomer(updateData);
 
-      if (response.ok) {
+      if (response?.ok) {
         setSaving(false);
         setEditing(false);
         setResult({ ok: true, message: "Profile updated successfully!" });
         setTimeout(() => setResult(null), 2500);
-
-        // Refresh customer data
-        if (refreshCustomer) {
-          await refreshCustomer();
+        // force a fresh reload and show loader while fetching
+        beginLoading(1500);
+        await refreshCustomer(true);
+        if (isMounted.current) {
+          setLocalLoading(false);
+          clearFallbackTimer();
         }
       } else {
-        throw new Error(response.error || "Update failed");
+        const message = response?.error || "Update failed";
+        throw new Error(
+          typeof message === "string" ? message : JSON.stringify(message)
+        );
       }
     } catch (error) {
       setSaving(false);
@@ -166,13 +324,11 @@ export default function ProfilePage() {
     }
   };
 
-  // Approve action simulation (admin)
   const handleApprove = () => {
     if (!window.confirm("Approve changes for this profile?")) return;
     window.alert("Profile approved (simulated).");
   };
 
-  // Export JSON profile
   const handleExport = () => {
     const blob = new Blob([JSON.stringify(formData, null, 2)], {
       type: "application/json",
@@ -187,7 +343,6 @@ export default function ProfilePage() {
     URL.revokeObjectURL(url);
   };
 
-  // Download vCard file
   const handleVCard = () => {
     const vcard = [
       "BEGIN:VCARD",
@@ -209,7 +364,6 @@ export default function ProfilePage() {
     URL.revokeObjectURL(url);
   };
 
-  // Account delete action simulation
   const handleDelete = () => {
     if (
       !window.confirm(
@@ -224,22 +378,22 @@ export default function ProfilePage() {
     <DashboardLayout>
       <div className="max-w-6xl mx-auto p-6 space-y-8">
         <ProfileHeader
-          loading={loading}
+          loading={localLoading}
           initials={initials}
           preview={avatarPreview}
           name={formData.name}
           email={formData.email}
-          premium={true}
+          premium
           onAvatar={handleAvatar}
           onEditToggle={() => setEditing((e) => !e)}
           editing={editing}
-          disabled={loading || saving}
+          disabled={localLoading || saving}
         />
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2">
             <ProfileDetails
-              loading={loading}
+              loading={localLoading}
               editing={editing}
               formData={formData}
               onChange={handleChange}
@@ -250,41 +404,46 @@ export default function ProfilePage() {
           </div>
 
           <div className="space-y-6">
-            <SecurityCard
-              loading={loading}
-              security={{}}
-              onManage={() => window.alert("Manage security (simulated)")}
-            />
             <KycCard
               loading={kycLoading}
               kyc={{
-                pan_status: kyc?.pan?.status,
-                aadhaar_status: kyc?.aadhaar?.status,
-                pan: kyc?.pan,
-                aadhaar: kyc?.aadhaar,
+                aadhaar_status: aadhaar?.status,
+                aadhaar,
               }}
               onUpdate={() => navigate("/profile/kyc")}
             />
+
             <div>
               <Text variant="muted" className="mb-2">
-                Tax & IDs
+                IDs
               </Text>
-              <div className="p-4 rounded-lg bg-base-200/50 mb-4">
-                <div className="text-sm text-base-content/60">PAN</div>
-                <div className="font-medium">{formData.pan || "—"}</div>
-              </div>
+
               <div className="p-4 rounded-lg bg-base-200/50 mb-4">
                 <div className="text-sm text-base-content/60">Aadhaar</div>
                 <div className="font-medium">{formData.aadhaar || "—"}</div>
               </div>
             </div>
 
-            <QuickActions
-              onExport={handleExport}
-              onDownloadVCard={handleVCard}
-              onDelete={handleDelete}
-              disabled={loading || saving}
-            />
+            <div className="space-y-2">
+              <button
+                onClick={handleExport}
+                className="w-full rounded px-4 py-2 border"
+                disabled={localLoading || saving}>
+                Export JSON
+              </button>
+              <button
+                onClick={handleVCard}
+                className="w-full rounded px-4 py-2 border"
+                disabled={localLoading || saving}>
+                Download vCard
+              </button>
+              <button
+                onClick={handleDelete}
+                className="w-full rounded px-4 py-2 border text-red-600"
+                disabled={localLoading || saving}>
+                Delete Account
+              </button>
+            </div>
           </div>
         </div>
       </div>

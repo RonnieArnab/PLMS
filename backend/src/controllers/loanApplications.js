@@ -6,10 +6,9 @@
 //   res.json({ service: "loanApplications", action: "create", data: req.body });
 // }
 
-
 import pool from "../config/db.js";
 // import db from "../db.js";
-// 
+//
 // Get all loan applications with user and product info
 export async function getAll(req, res) {
   try {
@@ -30,7 +29,13 @@ export async function getAll(req, res) {
 
     res.json({ success: true, data: result.rows, count: result.rowCount });
   } catch (error) {
-    res.status(500).json({ success: false, message: "Error fetching loan applications", error: error.message });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Error fetching loan applications",
+        error: error.message,
+      });
   }
 }
 
@@ -54,12 +59,20 @@ export async function getById(req, res) {
     const result = await pool.query(query, [id]);
 
     if (result.rowCount === 0) {
-      return res.status(404).json({ success: false, message: "Loan application not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Loan application not found" });
     }
 
     res.json({ success: true, data: result.rows[0] });
   } catch (error) {
-    res.status(500).json({ success: false, message: "Error fetching loan application", error: error.message });
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Error fetching loan application",
+        error: error.message,
+      });
   }
 }
 
@@ -102,7 +115,11 @@ export async function getByUserId(req, res) {
 
         // Calculate monthly payment (EMI) first
         const approvedAmount = loan.approved_amount || loan.loan_amount;
-        const monthlyPayment = calculateEMI(approvedAmount, loan.interest_rate_apr, loan.tenure_months);
+        const monthlyPayment = calculateEMI(
+          approvedAmount,
+          loan.interest_rate_apr,
+          loan.tenure_months
+        );
 
         // Calculate total payable amount (principal + interest)
         const totalPayable = monthlyPayment * loan.tenure_months;
@@ -112,7 +129,10 @@ export async function getByUserId(req, res) {
         const remainingBalance = Math.max(0, totalPayable - totalPaid);
 
         // Calculate next payment date (only if loan is not completed)
-        const nextPaymentDate = remainingBalance > 0 ? calculateNextPaymentDate(loan.approved_date || loan.applied_date) : null;
+        const nextPaymentDate =
+          remainingBalance > 0
+            ? calculateNextPaymentDate(loan.approved_date || loan.applied_date)
+            : null;
 
         // Determine loan status based on remaining balance and application status
         // Allow for small rounding differences (less than 1 rupee)
@@ -122,7 +142,9 @@ export async function getByUserId(req, res) {
         if (isCompleted) {
           // Loan is fully paid - mark as completed
           loanStatus = "completed";
-        } else if (["APPROVED", "DISBURSED"].includes(loan.application_status)) {
+        } else if (
+          ["APPROVED", "DISBURSED"].includes(loan.application_status)
+        ) {
           // Loan is approved/disbursted and has remaining balance - active
           loanStatus = "active";
         } else if (loan.application_status === "REJECTED") {
@@ -139,8 +161,11 @@ export async function getByUserId(req, res) {
           FROM payments
           WHERE loan_id = $1 AND amount_paid > 0
         `;
-        const paymentCountResult = await pool.query(paymentCountQuery, [loan.loan_id]);
-        const paymentCount = parseInt(paymentCountResult.rows[0].payment_count) || 0;
+        const paymentCountResult = await pool.query(paymentCountQuery, [
+          loan.loan_id,
+        ]);
+        const paymentCount =
+          parseInt(paymentCountResult.rows[0].payment_count) || 0;
 
         // Calculate completion date for completed loans
         let completionDate = null;
@@ -152,12 +177,15 @@ export async function getByUserId(req, res) {
             WHERE loan_id = $1 AND amount_paid > 0
             ORDER BY payment_date DESC
           `;
-          const completionResult = await pool.query(completionQuery, [loan.loan_id]);
+          const completionResult = await pool.query(completionQuery, [
+            loan.loan_id,
+          ]);
 
           if (completionResult.rows.length > 0) {
             // Calculate running balance to find completion payment
             let runningBalance = totalPayable;
-            for (const payment of completionResult.rows.reverse()) { // Process in chronological order
+            for (const payment of completionResult.rows.reverse()) {
+              // Process in chronological order
               const paymentAmount = parseFloat(payment.amount_paid || 0);
               runningBalance -= paymentAmount;
               if (runningBalance <= 0) {
@@ -184,15 +212,25 @@ export async function getByUserId(req, res) {
           isCompleted: isCompleted,
           paymentCount: paymentCount,
           totalInstallments: loan.tenure_months,
-          completionDate: completionDate
+          completionDate: completionDate,
         };
       })
     );
 
-    res.json({ success: true, data: loansWithPayments, count: loansWithPayments.length });
+    res.json({
+      success: true,
+      data: loansWithPayments,
+      count: loansWithPayments.length,
+    });
   } catch (error) {
-    console.error('Error fetching user loans with payments:', error);
-    res.status(500).json({ success: false, message: "Error fetching user's loan applications", error: error.message });
+    console.error("Error fetching user loans with payments:", error);
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: "Error fetching user's loan applications",
+        error: error.message,
+      });
   }
 }
 
@@ -200,8 +238,9 @@ export async function getByUserId(req, res) {
 function calculateEMI(principal, annualRate, tenureMonths) {
   if (!principal || !annualRate || !tenureMonths) return 0;
   const monthlyRate = annualRate / 12 / 100;
-  const emi = (principal * monthlyRate * Math.pow(1 + monthlyRate, tenureMonths)) /
-              (Math.pow(1 + monthlyRate, tenureMonths) - 1);
+  const emi =
+    (principal * monthlyRate * Math.pow(1 + monthlyRate, tenureMonths)) /
+    (Math.pow(1 + monthlyRate, tenureMonths) - 1);
   return Math.round(emi * 100) / 100; // Round to 2 decimal places
 }
 
@@ -230,7 +269,17 @@ function calculateNextPaymentDate(approvedDate) {
 // Create a new loan application
 export async function create(req, res) {
   try {
-    const { user_id, product_id, loan_amount, tenure_months, application_status = "DRAFT", approved_amount, interest_rate_apr, processing_fee, risk_grade } = req.body;
+    const {
+      user_id,
+      product_id,
+      loan_amount,
+      tenure_months,
+      application_status = "DRAFT",
+      approved_amount,
+      interest_rate_apr,
+      processing_fee,
+      risk_grade,
+    } = req.body;
 
     // if (!user_id || !product_id || !loan_amount || !tenure_months) {
     //   return res.status(400).json({ success: false, message: "Missing required fields" });
@@ -242,10 +291,28 @@ export async function create(req, res) {
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING *
     `;
-    const values = [user_id, product_id, loan_amount, tenure_months, application_status, approved_amount, interest_rate_apr, processing_fee, risk_grade];
+    const values = [
+      user_id,
+      product_id,
+      loan_amount,
+      tenure_months,
+      application_status,
+      approved_amount,
+      interest_rate_apr,
+      processing_fee,
+      risk_grade,
+    ];
     const result = await pool.query(query, values);
 
-    res.status(201).json({ success: true, message: "Loan application created", data: result.rows[0] });
+    // send mail to user
+
+    res
+      .status(201)
+      .json({
+        success: true,
+        message: "Loan application created",
+        data: result.rows[0],
+      });
   } catch (error) {
     console.error("Error in create loan application:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -260,19 +327,29 @@ export async function update(req, res) {
     const values = Object.values(req.body);
 
     if (fields.length === 0) {
-      return res.status(400).json({ success: false, message: "No fields to update" });
+      return res
+        .status(400)
+        .json({ success: false, message: "No fields to update" });
     }
 
     const setClause = fields.map((f, i) => `${f} = $${i + 1}`).join(", ");
-    const query = `UPDATE loanapplications SET ${setClause} WHERE loan_id = $${fields.length + 1} RETURNING *`;
+    const query = `UPDATE loanapplications SET ${setClause} WHERE loan_id = $${
+      fields.length + 1
+    } RETURNING *`;
 
     const result = await pool.query(query, [...values, id]);
 
     if (result.rowCount === 0) {
-      return res.status(404).json({ success: false, message: "Loan application not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Loan application not found" });
     }
 
-    res.json({ success: true, message: "Loan application updated", data: result.rows[0] });
+    res.json({
+      success: true,
+      message: "Loan application updated",
+      data: result.rows[0],
+    });
   } catch (error) {
     console.error("Error in create loan application:", error);
     res.status(500).json({ success: false, message: error.message });
@@ -283,13 +360,22 @@ export async function update(req, res) {
 export async function remove(req, res) {
   try {
     const { id } = req.params;
-    const result = await pool.query("DELETE FROM loanapplications WHERE loan_id = $1 RETURNING *", [id]);
+    const result = await pool.query(
+      "DELETE FROM loanapplications WHERE loan_id = $1 RETURNING *",
+      [id]
+    );
 
     if (result.rowCount === 0) {
-      return res.status(404).json({ success: false, message: "Loan application not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Loan application not found" });
     }
 
-    res.json({ success: true, message: "Loan application deleted", data: result.rows[0] });
+    res.json({
+      success: true,
+      message: "Loan application deleted",
+      data: result.rows[0],
+    });
   } catch (error) {
     console.error("Error in create loan application:", error);
     res.status(500).json({ success: false, message: error.message });

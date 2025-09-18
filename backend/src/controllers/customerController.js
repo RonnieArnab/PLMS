@@ -52,10 +52,18 @@ function safeServerError(res, err, msg = "Internal server error") {
 async function ensureNomineeColumns() {
   const client = await pool.connect();
   try {
-    await client.query(`ALTER TABLE customerprofile ADD COLUMN IF NOT EXISTS nominee VARCHAR(255) DEFAULT NULL;`);
-    await client.query(`ALTER TABLE customerprofile ADD COLUMN IF NOT EXISTS nominee_contact VARCHAR(20) DEFAULT NULL;`);
-    await client.query(`ALTER TABLE customerprofile ADD COLUMN IF NOT EXISTS date_of_birth DATE DEFAULT NULL;`);
-    await client.query(`ALTER TABLE customerprofile ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();`);
+    await client.query(
+      `ALTER TABLE customerprofile ADD COLUMN IF NOT EXISTS nominee VARCHAR(255) DEFAULT NULL;`
+    );
+    await client.query(
+      `ALTER TABLE customerprofile ADD COLUMN IF NOT EXISTS nominee_contact VARCHAR(20) DEFAULT NULL;`
+    );
+    await client.query(
+      `ALTER TABLE customerprofile ADD COLUMN IF NOT EXISTS date_of_birth DATE DEFAULT NULL;`
+    );
+    await client.query(
+      `ALTER TABLE customerprofile ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();`
+    );
   } catch (err) {
     console.error("Error adding nominee columns:", err);
   } finally {
@@ -86,7 +94,7 @@ async function fetchCombinedUser(userId) {
            b.bank_name, b.account_number, b.ifsc_code, b.account_type, b.is_primary
     FROM users u
     LEFT JOIN customerprofile c ON c.user_id = u.user_id
-    LEFT JOIN bank_accounts b ON b.account_id = c.account_id
+    LEFT JOIN bank_accounts b ON b.customer_id = c.customer_id
     WHERE u.user_id = $1
     LIMIT 1
   `;
@@ -94,6 +102,8 @@ async function fetchCombinedUser(userId) {
 
   if (!r.rows.length) return null;
   const row = r.rows[0];
+
+  console.log(row);
 
   // Calculate age from date_of_birth
   let age = null;
@@ -312,8 +322,10 @@ export const completeCustomerProfile = async (req, res) => {
       if (address) push("address", address);
       if (accountIdToUse) push("account_id", accountIdToUse);
       if (req.body.nominee !== undefined) push("nominee", req.body.nominee);
-      if (req.body.nominee_contact !== undefined) push("nominee_contact", req.body.nominee_contact);
-      if (req.body.date_of_birth !== undefined) push("date_of_birth", req.body.date_of_birth);
+      if (req.body.nominee_contact !== undefined)
+        push("nominee_contact", req.body.nominee_contact);
+      if (req.body.date_of_birth !== undefined)
+        push("date_of_birth", req.body.date_of_birth);
 
       if (!sets.length) {
         await client.query("ROLLBACK");
@@ -361,8 +373,10 @@ export const patchCustomerMe = async (req, res) => {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
 
+    // Allowed fields for customerprofile + phone is allowed to update users table
     const ALLOWED = new Set([
       "full_name",
+      "phone",
       "aadhaar_no",
       "pan_no",
       "profession",
@@ -372,35 +386,137 @@ export const patchCustomerMe = async (req, res) => {
       "nominee",
       "nominee_contact",
       "date_of_birth",
+      // bank-related fields (handled separately)
+      "bank_name",
+      "account_number",
+      "ifsc_code",
+      "account_type",
+      "is_primary",
     ]);
 
-    const updates = {};
-    for (const [k, v] of Object.entries(req.body || {})) {
-      if (ALLOWED.has(k)) updates[k] = v === "" ? null : v;
+    // Collect incoming fields and split profile updates vs bank updates
+    const incoming = req.body || {};
+    const profileUpdates = {};
+    const bankIncoming = {};
+    for (const [k, v] of Object.entries(incoming)) {
+      if (!ALLOWED.has(k)) continue;
+      // normalize empty string -> null
+      const val = v === "" ? null : v;
+      if (
+        [
+          "bank_name",
+          "account_number",
+          "ifsc_code",
+          "account_type",
+          "is_primary",
+        ].includes(k)
+      ) {
+        bankIncoming[k] = val;
+      } else {
+        profileUpdates[k] = val;
+      }
     }
-    if (!Object.keys(updates).length) {
+
+    if (
+      !Object.keys(profileUpdates).length &&
+      !Object.keys(bankIncoming).length
+    ) {
       return res.status(400).json({ error: "No updatable fields provided" });
     }
 
-    if (updates.aadhaar_no && !/^\d{12}$/.test(String(updates.aadhaar_no))) {
+    // Basic validations
+    if (
+      profileUpdates.aadhaar_no &&
+      !/^\d{12}$/.test(String(profileUpdates.aadhaar_no))
+    ) {
       return res.status(400).json({
         error: "Invalid Aadhaar format",
         errors: { aadhaar_no: "invalid" },
       });
     }
+
     if (
-      updates.pan_no &&
-      !/^[A-Z]{5}[0-9]{4}[A-Z]$/i.test(String(updates.pan_no))
+      profileUpdates.pan_no &&
+      !/^[A-Z]{5}[0-9]{4}[A-Z]$/i.test(String(profileUpdates.pan_no))
     ) {
-      return res
-        .status(400)
-        .json({ error: "Invalid PAN format", errors: { pan_no: "invalid" } });
+      return res.status(400).json({
+        error: "Invalid PAN format",
+        errors: { pan_no: "invalid" },
+      });
+    }
+
+    if (
+      profileUpdates.date_of_birth &&
+      !/^\d{4}-\d{2}-\d{2}$/.test(String(profileUpdates.date_of_birth))
+    ) {
+      return res.status(400).json({
+        error: "Invalid date_of_birth format",
+        errors: { date_of_birth: "use YYYY-MM-DD" },
+      });
+    }
+
+    if (
+      profileUpdates.years_experience !== undefined &&
+      profileUpdates.years_experience !== null &&
+      (isNaN(Number(profileUpdates.years_experience)) ||
+        Number(profileUpdates.years_experience) < 0)
+    ) {
+      return res.status(400).json({
+        error: "Invalid years_experience",
+        errors: { years_experience: "invalid" },
+      });
+    }
+
+    if (
+      profileUpdates.annual_income !== undefined &&
+      profileUpdates.annual_income !== null &&
+      (isNaN(Number(profileUpdates.annual_income)) ||
+        Number(profileUpdates.annual_income) < 0)
+    ) {
+      return res.status(400).json({
+        error: "Invalid annual_income",
+        errors: { annual_income: "invalid" },
+      });
+    }
+
+    // Bank basic checks
+    if (
+      bankIncoming.ifsc_code !== undefined &&
+      bankIncoming.ifsc_code !== null &&
+      String(bankIncoming.ifsc_code).length < 6
+    ) {
+      return res.status(400).json({
+        error: "IFSC looks short",
+        errors: { ifsc_code: "invalid" },
+      });
+    }
+
+    if (
+      bankIncoming.account_number !== undefined &&
+      bankIncoming.account_number !== null &&
+      !/^[\d-]{6,24}$/.test(String(bankIncoming.account_number))
+    ) {
+      return res.status(400).json({
+        error: "Account number looks invalid",
+        errors: { account_number: "invalid" },
+      });
+    }
+
+    // Normalize is_primary
+    if (
+      bankIncoming.is_primary !== undefined &&
+      bankIncoming.is_primary !== null
+    ) {
+      const b = bankIncoming.is_primary;
+      bankIncoming.is_primary =
+        b === true || b === "true" || b === "1" ? true : false;
     }
 
     await client.query("BEGIN");
 
+    // Ensure user exists
     const userRes = await client.query(
-      "SELECT user_id FROM users WHERE user_id = $1",
+      "SELECT user_id, email, phone_number, full_name FROM users WHERE user_id = $1 LIMIT 1",
       [userId]
     );
     if (!userRes.rows.length) {
@@ -408,10 +524,11 @@ export const patchCustomerMe = async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    if (updates.pan_no) {
+    // Unique checks for PAN / Aadhaar (exclude current user)
+    if (profileUpdates.pan_no) {
       const r = await client.query(
-        "SELECT customer_id FROM customerprofile WHERE pan_no = $1 AND user_id <> $2",
-        [updates.pan_no, userId]
+        "SELECT customer_id FROM customerprofile WHERE pan_no = $1 AND user_id <> $2 LIMIT 1",
+        [profileUpdates.pan_no, userId]
       );
       if (r.rows.length) {
         await client.query("ROLLBACK");
@@ -422,10 +539,10 @@ export const patchCustomerMe = async (req, res) => {
       }
     }
 
-    if (updates.aadhaar_no) {
+    if (profileUpdates.aadhaar_no) {
       const r = await client.query(
-        "SELECT customer_id FROM customerprofile WHERE aadhaar_no = $1 AND user_id <> $2",
-        [updates.aadhaar_no, userId]
+        "SELECT customer_id FROM customerprofile WHERE aadhaar_no = $1 AND user_id <> $2 LIMIT 1",
+        [profileUpdates.aadhaar_no, userId]
       );
       if (r.rows.length) {
         await client.query("ROLLBACK");
@@ -436,61 +553,311 @@ export const patchCustomerMe = async (req, res) => {
       }
     }
 
+    // Check if customerprofile exists
     const cpCheck = await client.query(
-      "SELECT customer_id FROM customerprofile WHERE user_id = $1",
+      "SELECT * FROM customerprofile WHERE user_id = $1 LIMIT 1",
       [userId]
     );
+
+    // Update users table for phone/full_name if provided (non-destructive)
+    if (profileUpdates.phone || profileUpdates.full_name) {
+      const phoneVal = profileUpdates.phone ?? null;
+      const fullNameVal = profileUpdates.full_name ?? null;
+      await client.query(
+        `UPDATE users
+         SET phone_number = COALESCE($1, phone_number),
+             full_name = COALESCE($2, full_name),
+             updated_at = NOW()
+         WHERE user_id = $3`,
+        [phoneVal, fullNameVal, userId]
+      );
+      // keep the values for profile update as well (full_name)
+    }
+
+    // Helper to handle bank upsert logic and set customerprofile.account_id
+    const handleBankUpdates = async (customerId) => {
+      // If no bank info provided, do nothing
+      if (
+        !("account_number" in bankIncoming) &&
+        !("bank_name" in bankIncoming) &&
+        !("ifsc_code" in bankIncoming) &&
+        !("account_type" in bankIncoming) &&
+        !("is_primary" in bankIncoming)
+      ) {
+        return null;
+      }
+
+      // If account_number explicitly set to null -> unset account_id on profile
+      if (bankIncoming.account_number === null) {
+        await client.query(
+          "UPDATE customerprofile SET account_id = NULL WHERE customer_id = $1",
+          [customerId]
+        );
+        return null;
+      }
+
+      // If account_number provided -> ensure uniqueness
+      if (bankIncoming.account_number) {
+        const exist = await client.query(
+          "SELECT account_id, customer_id FROM bank_accounts WHERE account_number = $1 LIMIT 1",
+          [bankIncoming.account_number]
+        );
+
+        if (exist.rows.length) {
+          const row = exist.rows[0];
+          if (row.customer_id !== customerId) {
+            // Another customer owns this account -> conflict
+            throw {
+              status: 409,
+              body: {
+                error: "Account number already in use",
+                errors: { account_number: "already_in_use" },
+              },
+            };
+          }
+          // same customer - update the bank row with any provided fields
+          const updates = [];
+          const vals = [];
+          let idx = 1;
+          if (bankIncoming.bank_name !== undefined) {
+            updates.push(`bank_name = $${idx++}`);
+            vals.push(bankIncoming.bank_name);
+          }
+          if (bankIncoming.ifsc_code !== undefined) {
+            updates.push(`ifsc_code = $${idx++}`);
+            vals.push(bankIncoming.ifsc_code);
+          }
+          if (bankIncoming.account_type !== undefined) {
+            updates.push(`account_type = $${idx++}`);
+            vals.push(bankIncoming.account_type);
+          }
+          if (bankIncoming.is_primary !== undefined) {
+            updates.push(`is_primary = $${idx++}`);
+            vals.push(bankIncoming.is_primary);
+          }
+          if (updates.length) {
+            vals.push(row.account_id);
+            const uq = `UPDATE bank_accounts SET ${updates.join(
+              ", "
+            )}, updated_at = NOW() WHERE account_id = $${vals.length}`;
+            await client.query(uq, vals);
+          }
+          // If is_primary true, clear other primaries
+          if (bankIncoming.is_primary) {
+            await client.query(
+              "UPDATE bank_accounts SET is_primary = false WHERE customer_id = $1 AND account_id <> $2",
+              [customerId, row.account_id]
+            );
+          }
+
+          // update profile.account_id to this account
+          await client.query(
+            "UPDATE customerprofile SET account_id = $1 WHERE customer_id = $2",
+            [row.account_id, customerId]
+          );
+          return row.account_id;
+        } else {
+          // Insert new bank row for this customer
+          const insertQ = `INSERT INTO bank_accounts
+            (customer_id, bank_name, branch_name, ifsc_code, account_number, account_type, is_primary, created_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())
+            RETURNING account_id`;
+          const isPrimaryVal =
+            bankIncoming.is_primary === undefined
+              ? true
+              : !!bankIncoming.is_primary;
+          const insertVals = [
+            customerId,
+            bankIncoming.bank_name || null,
+            null,
+            bankIncoming.ifsc_code || null,
+            bankIncoming.account_number,
+            bankIncoming.account_type || null,
+            isPrimaryVal,
+          ];
+          const ai = await client.query(insertQ, insertVals);
+          const newAccountId = ai.rows[0].account_id;
+
+          // if is_primary true, clear other primaries
+          if (isPrimaryVal) {
+            await client.query(
+              "UPDATE bank_accounts SET is_primary = false WHERE customer_id = $1 AND account_id <> $2",
+              [customerId, newAccountId]
+            );
+          }
+
+          // update profile.account_id
+          await client.query(
+            "UPDATE customerprofile SET account_id = $1 WHERE customer_id = $2",
+            [newAccountId, customerId]
+          );
+
+          return newAccountId;
+        }
+      }
+
+      // If account_number not provided but other bank fields provided, and profile.account_id exists -> update existing bank row
+      const cp = await client.query(
+        "SELECT account_id FROM customerprofile WHERE customer_id = $1 LIMIT 1",
+        [customerId]
+      );
+      const currentAccountId = cp.rows[0]?.account_id ?? null;
+      if (!currentAccountId) {
+        // no account to update and no account_number provided -> insert a new row (requires account_number)
+        // nothing to do
+        return null;
+      }
+
+      // update the existing bank row
+      const updates = [];
+      const vals = [];
+      let idx = 1;
+      if (bankIncoming.bank_name !== undefined) {
+        updates.push(`bank_name = $${idx++}`);
+        vals.push(bankIncoming.bank_name);
+      }
+      if (bankIncoming.ifsc_code !== undefined) {
+        updates.push(`ifsc_code = $${idx++}`);
+        vals.push(bankIncoming.ifsc_code);
+      }
+      if (bankIncoming.account_type !== undefined) {
+        updates.push(`account_type = $${idx++}`);
+        vals.push(bankIncoming.account_type);
+      }
+      if (bankIncoming.is_primary !== undefined) {
+        updates.push(`is_primary = $${idx++}`);
+        vals.push(bankIncoming.is_primary);
+      }
+
+      if (updates.length) {
+        vals.push(currentAccountId);
+        const uq = `UPDATE bank_accounts SET ${updates.join(
+          ", "
+        )}, updated_at = NOW() WHERE account_id = $${vals.length}`;
+        await client.query(uq, vals);
+
+        if (bankIncoming.is_primary) {
+          await client.query(
+            "UPDATE bank_accounts SET is_primary = false WHERE customer_id = $1 AND account_id <> $2",
+            [customerId, currentAccountId]
+          );
+        }
+      }
+
+      return currentAccountId;
+    }; // end handleBankUpdates
+
     if (!cpCheck.rows.length) {
+      // Insert new customerprofile
       const insertQ = `
-        INSERT INTO customerprofile (user_id, full_name, aadhaar_no, pan_no, profession,
-          years_experience, annual_income, address, nominee, nominee_contact, date_of_birth, created_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
+        INSERT INTO customerprofile 
+          (user_id, full_name, aadhaar_no, pan_no, profession,
+           years_experience, annual_income, address, nominee, nominee_contact, date_of_birth, kyc_status, created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'PENDING', NOW())
         RETURNING *
       `;
       const iv = [
         userId,
-        updates.full_name || null,
-        updates.aadhaar_no || null,
-        updates.pan_no || null,
-        updates.profession || null,
-        updates.years_experience ?? null,
-        updates.annual_income ?? null,
-        updates.address || null,
-        updates.nominee || null,
-        updates.nominee_contact || null,
-        updates.date_of_birth || null,
+        profileUpdates.full_name || null,
+        profileUpdates.aadhaar_no || null,
+        profileUpdates.pan_no || null,
+        profileUpdates.profession || null,
+        profileUpdates.years_experience ?? null,
+        profileUpdates.annual_income ?? null,
+        profileUpdates.address || null,
+        profileUpdates.nominee || null,
+        profileUpdates.nominee_contact || null,
+        profileUpdates.date_of_birth || null,
       ];
       const insR = await client.query(insertQ, iv);
-      await client.query("COMMIT");
+      const createdProfile = insR.rows[0];
 
-      // Return complete user data with all fields including users table data
+      // handle bank creation if provided
+      try {
+        await handleBankUpdates(createdProfile.customer_id);
+      } catch (e) {
+        // allow handleBankUpdates to throw structured error
+        await client.query("ROLLBACK");
+        if (e?.status && e?.body) return res.status(e.status).json(e.body);
+        throw e;
+      }
+
+      await client.query("COMMIT");
       const completeUser = await fetchCombinedUser(userId);
       return res.status(201).json({ user: completeUser });
     } else {
+      // Update existing profile
+      const existing = cpCheck.rows[0];
+
+      // Determine if sensitive fields changed -> reset kyc_status
+      let resetKyc = false;
+      if (
+        profileUpdates.pan_no !== undefined &&
+        profileUpdates.pan_no !== null &&
+        String(profileUpdates.pan_no) !== String(existing.pan_no)
+      ) {
+        resetKyc = true;
+      }
+      if (
+        profileUpdates.aadhaar_no !== undefined &&
+        profileUpdates.aadhaar_no !== null &&
+        String(profileUpdates.aadhaar_no) !== String(existing.aadhaar_no)
+      ) {
+        resetKyc = true;
+      }
+
+      // Build update for profile (skip phone - updated on users table)
       const sets = [];
       const vals = [];
       let idx = 1;
-      for (const [k, v] of Object.entries(updates)) {
+      for (const [k, v] of Object.entries(profileUpdates)) {
+        if (k === "phone") continue;
         sets.push(`${k} = $${idx++}`);
         vals.push(v);
       }
-      vals.push(userId);
-      const updateQ = `UPDATE customerprofile SET ${sets.join(
-        ", "
-      )}, updated_at = NOW() WHERE user_id = $${vals.length} RETURNING *`;
-      const resu = await client.query(updateQ, vals);
-      await client.query("COMMIT");
 
-      // Return complete user data with all fields including users table data
+      if (resetKyc) {
+        sets.push(`kyc_status = $${idx++}`);
+        vals.push("PENDING");
+      }
+
+      if (sets.length) {
+        // add updated_at and where clause
+        const whereIdx = idx;
+        vals.push(userId);
+        const updateQ = `UPDATE customerprofile SET ${sets.join(
+          ", "
+        )}, updated_at = NOW() WHERE user_id = $${whereIdx} RETURNING *`;
+        await client.query(updateQ, vals);
+      }
+
+      // Now handle bank updates (may throw structured error)
+      try {
+        await handleBankUpdates(existing.customer_id);
+      } catch (e) {
+        await client.query("ROLLBACK");
+        if (e?.status && e?.body) return res.status(e.status).json(e.body);
+        throw e;
+      }
+
+      await client.query("COMMIT");
       const completeUser = await fetchCombinedUser(userId);
       return res.json({ user: completeUser });
     }
   } catch (err) {
     await client.query("ROLLBACK").catch(() => {});
     console.error("patchCustomerMe error:", err);
+
+    // handle unique constraint failures more gracefully
     if (err?.code === "23505") {
-      return res.status(409).json({ error: "Unique constraint violation" });
+      const detail = err.detail || "";
+      const field = detail.match(/\((.*?)\)=/)?.[1] || null;
+      const errors = field ? { [field]: "already_exists" } : {};
+      return res
+        .status(409)
+        .json({ error: "Unique constraint violation", errors });
     }
+
     return res.status(500).json({ error: "Failed to update profile" });
   } finally {
     client.release();

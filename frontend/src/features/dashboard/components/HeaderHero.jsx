@@ -7,9 +7,8 @@ import { Text } from "@components/ui/Text.jsx";
 import { CreditCard } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
-
 export default function HeaderHero({ onApply = () => {} }) {
-   const navigate = useNavigate();
+  const navigate = useNavigate();
   return (
     <MotionFadeIn delay={0.04}>
       <Paper
@@ -29,10 +28,10 @@ export default function HeaderHero({ onApply = () => {} }) {
           </div>
 
           <div className="flex items-center gap-3 w-full lg:w-auto">
-            <Input
+            {/* <Input
               placeholder="Search applications, borrowers..."
               className="hidden md:block max-w-sm"
-            />
+            /> */}
             <Button
               variant="gradient"
               size="lg"

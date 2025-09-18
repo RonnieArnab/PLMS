@@ -31,19 +31,19 @@ export default function BankDetailsStep({ formData, setFormData, errors }) {
           // Map customer profile fields to bank details form fields
           if (customer.bank_name && !formData.bank_name) {
             newFormData.bank_name = customer.bank_name;
-            filledFields.add('bank_name');
+            filledFields.add("bank_name");
           }
           if (customer.account_number && !formData.account_number) {
             newFormData.account_number = customer.account_number;
-            filledFields.add('account_number');
+            filledFields.add("account_number");
           }
           if (customer.ifsc_code && !formData.ifsc) {
             newFormData.ifsc = customer.ifsc_code;
-            filledFields.add('ifsc');
+            filledFields.add("ifsc");
           }
           if (customer.account_holder && !formData.account_holder) {
             newFormData.account_holder = customer.account_holder;
-            filledFields.add('account_holder');
+            filledFields.add("account_holder");
           }
 
           setFormData(newFormData);
@@ -76,7 +76,7 @@ export default function BankDetailsStep({ formData, setFormData, errors }) {
   const handleFieldChange = (field, value) => {
     setFormData({ ...formData, [field]: value });
     if (autoFilledFields.has(field)) {
-      setAutoFilledFields(prev => {
+      setAutoFilledFields((prev) => {
         const newSet = new Set(prev);
         newSet.delete(field);
         return newSet;
@@ -85,7 +85,13 @@ export default function BankDetailsStep({ formData, setFormData, errors }) {
   };
 
   // Enhanced input component with auto-fill indicators
-  const renderField = (field, label, type = "text", placeholder = "", gridCols = null) => {
+  const renderField = (
+    field,
+    label,
+    type = "text",
+    placeholder = "",
+    gridCols = null
+  ) => {
     const isAutoFilled = autoFilledFields.has(field);
     const hasError = errors[field];
 
@@ -107,7 +113,9 @@ export default function BankDetailsStep({ formData, setFormData, errors }) {
       onChange: (e) => handleFieldChange(field, e.target.value),
       placeholder,
       error: hasError,
-      className: `${isAutoFilled ? 'border-green-300 bg-green-50' : ''} ${hasError ? 'border-red-300' : ''}`
+      className: `${isAutoFilled ? "border-green-300 bg-green-50" : ""} ${
+        hasError ? "border-red-300" : ""
+      }`,
     };
 
     if (gridCols) {
@@ -153,8 +161,7 @@ export default function BankDetailsStep({ formData, setFormData, errors }) {
             size="sm"
             variant="outline"
             onClick={autoFillFromProfile}
-            className="ml-auto"
-          >
+            className="ml-auto">
             Retry
           </Button>
         </div>
@@ -167,9 +174,19 @@ export default function BankDetailsStep({ formData, setFormData, errors }) {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {renderField("bank_name", "Bank name", "text", "Enter your bank name")}
-        {renderField("account_number", "Account number", "text", "Enter your account number")}
+        {renderField(
+          "account_number",
+          "Account number",
+          "text",
+          "Enter your account number"
+        )}
         {renderField("ifsc", "IFSC code", "text", "Enter IFSC code")}
-        {renderField("account_holder", "Account holder name", "text", "Enter account holder name")}
+        {renderField(
+          "account_holder",
+          "Account holder name",
+          "text",
+          "Enter account holder name"
+        )}
       </div>
     </Card>
   );

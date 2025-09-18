@@ -7,6 +7,7 @@ import { Button } from "@components/ui/Button";
 import { Text } from "@components/ui/Text";
 import { AlertCircle } from "lucide-react";
 import { useAuth } from "@context/AuthContext";
+import { useNavigate } from "react-router-dom";
 
 // import your individual step components
 import {
@@ -14,11 +15,11 @@ import {
   LoanTypeStep,
   PersonalInfoStep,
   FinancialInfoStep,
-  KycVerificationStep,
   DocumentsStep,
   CompareLoansStep,
   ReviewSubmitStep,
 } from "@features/loans/components/steps/index"; // adjust path as needed
+// import { CursorInternal } from "recharts/types/component/Cursor";
 
 // --- validation ---
 function validateStep(step, data, final = false) {
@@ -40,14 +41,14 @@ function validateStep(step, data, final = false) {
       if (!data.tenure_months) errs.tenure_months = "Tenure is required";
       break;
     }
+    // case 5: {
+    //   if (!data.pan_no) errs.pan_no = "PAN is required";
+    //   if (!data.aadhaar_no) errs.aadhaar_no = "Aadhaar is required";
+    //   break;
+    // }
     case 5: {
-      if (!data.pan_no) errs.pan_no = "PAN is required";
-      if (!data.aadhaar_no) errs.aadhaar_no = "Aadhaar is required";
-      break;
-    }
-    case 6: {
       if (!data.documents?.length)
-        errs.documents = "Upload at least one document";
+        ers.documents = "Upload at least one document";
       break;
     }
     default:
@@ -69,7 +70,7 @@ function validateStep(step, data, final = false) {
   return { valid: Object.keys(errs).length === 0, errors: errs };
 }
 
-function StepperSkeleton({ stepsCount = 7 }) {
+function StepperSkeleton({ stepsCount = 6 }) {
   return (
     <div className="rounded-2xl p-3 shadow-md border border-base-200 overflow-hidden">
       <div className="overflow-x-auto">
@@ -133,6 +134,7 @@ function FormSkeleton() {
 
 export function LoanApplicationContent() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(1);
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(true);
@@ -284,10 +286,12 @@ export function LoanApplicationContent() {
       if (data.success) {
         setSubmitSuccess(true);
         alert("Loan Application Submitted Successfully!");
+        navigate("/loans");
       } else {
         setSubmitError(data.message || "Submission failed");
       }
     } catch (err) {
+      console.error("Loan Application Error:", err);
       setSubmitError("Network error. Please try again.");
     } finally {
       setSubmitLoading(false);
@@ -300,9 +304,9 @@ export function LoanApplicationContent() {
       { id: 2, label: "Loan Type" },
       { id: 3, label: "Compare Loans" },
       { id: 4, label: "Financial Info" },
-      { id: 5, label: "KYC Verification" },
-      { id: 6, label: "Documents" },
-      { id: 7, label: "Review & Submit" },
+      // { id: 5, label: "KYC Verification" },
+      { id: 5, label: "Documents" },
+      { id: 6, label: "Review & Submit" },
     ],
     []
   );
@@ -410,14 +414,14 @@ export function LoanApplicationContent() {
               errors={errors}
             />
           )}
-          {currentStep === 5 && (
+          {/* {currentStep === 5 && (
             <KycVerificationStep
               formData={formData}
               setFormData={setFormData}
               errors={errors}
             />
-          )}
-          {currentStep === 6 && (
+          )} */}
+          {currentStep === 5 && (
             <DocumentsStep
               formData={formData}
               setFormData={setFormData}
@@ -429,13 +433,17 @@ export function LoanApplicationContent() {
               }
             />
           )}
-          {currentStep === 7 && <ReviewSubmitStep formData={formData} />}
+          {currentStep === 6 && <ReviewSubmitStep formData={formData} />}
 
           <div className="flex justify-between pt-6 border-t border-base-200">
             <Button
               variant="outline"
               onClick={goBack}
-              disabled={currentStep === 1 || submitLoading}>
+              disabled={
+                currentStep === 1 ||
+                submitLoading ||
+                (currentStep === steps.length && submitSuccess)
+              }>
               Back
             </Button>
             {currentStep < steps.length ? (
